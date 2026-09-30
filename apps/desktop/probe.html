@@ -53,9 +53,20 @@
       log('--- iniciando: ' + name + ' ---');
       try {
         const stream = await fn();
-        const v = stream.getVideoTracks().length;
-        const a = stream.getAudioTracks().length;
-        log('OK   ' + name + ' -> video=' + v + ' audio=' + a, 'ok');
+        const v = stream.getVideoTracks();
+        const a = stream.getAudioTracks();
+
+        // Rotulo e settings revelam a ORIGEM real da track de audio:
+        // loopback global costuma vir como "System Audio"/"Audio de sistema",
+        // enquanto audio de janela vem com o nome da janela.
+        log('OK   ' + name + ' -> video=' + v.length + ' audio=' + a.length, 'ok');
+        if (a.length) {
+          log('       audio label = "' + a[0].label + '"');
+          log('       audio settings = ' + JSON.stringify(a[0].getSettings()));
+        }
+        if (v.length) {
+          log('       video label = "' + v[0].label + '"');
+        }
         stopAll(stream);
       } catch (err) {
         log('FALHA ' + name + ' -> ' + err.name + ': ' + err.message, 'fail');
@@ -110,6 +121,53 @@
       //     audio: { mandatory: { chromeMediaSource: 'desktop' } },
       //     video: false
       //   }));
+
+      // 4. getDisplayMedia via handler do Electron: entrega LOOPBACK GLOBAL?
+      //    Usa a MESMA fonte ja capturada no teste B para nao duplicar video.
+      if (screen) {
+        await test('D) getDisplayMedia + handler (loopback global)', async () => {
+          await window.probeAPI.setTarget(screen.id);
+          return navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: true
+          });
+        });
+      }
+
+      // 5. Video de JANELA + audio amarrado ao SCREEN (loopback global).
+      //    E o cenario que a app usa quando o usuario escolhe "Janela do
+      //    aplicativo". Se o audio vier com deviceId=loopback aqui, entao
+      //    amarrar o audio ao SCREEN (e nao a janela) da audio global.
+      if (win1 && screen) {
+        await test('E) video=janela, audio=screen', async () => {
+          const wv = VIDEO_CONSTRAINTS(win1.id);
+          return navigator.mediaDevices.getUserMedia({
+            audio: {
+              mandatory: {
+                chromeMediaSource: 'desktop',
+                chromeMediaSourceId: screen.id
+              }
+            },
+            video: wv
+          });
+        });
+      }
+
+      // 6. Controle: video=janela + audio=janela (deve ser audio RESTRITO)
+      if (win1) {
+        await test('F) video=janela, audio=janela (restrito)', async () => {
+          const wv = VIDEO_CONSTRAINTS(win1.id);
+          return navigator.mediaDevices.getUserMedia({
+            audio: {
+              mandatory: {
+                chromeMediaSource: 'desktop',
+                chromeMediaSourceId: win1.id
+              }
+            },
+            video: wv
+          });
+        });
+      }
 
       log('');
       log('=== Todos os testes concluidos sem derrubar o renderer ===', 'ok');

@@ -202,11 +202,20 @@
             <!-- Video Player Stage -->
             <div class="relative flex-1 min-h-[420px] sm:min-h-[500px] bg-black/90 rounded-2xl border border-gray-800 overflow-hidden flex items-center justify-center video-grid-pattern group shadow-2xl">
                 
-                <!-- Main Video Element -->
+                <!-- Audio/Video Elements -->
                 <video id="remoteVideo" autoplay playsinline class="w-full h-full object-contain max-h-[78vh] hidden"></video>
 
                 <!-- Audio Element for Viewer -->
                 <audio id="remoteAudio" autoplay class="hidden"></audio>
+
+                <!-- Overlay: o Chrome bloqueia audio automatico sem gesto do usuario -->
+                <div id="audioUnlockOverlay" class="absolute inset-0 z-40 hidden bg-black/75 backdrop-blur-sm flex items-center justify-center cursor-pointer">
+                    <div class="flex flex-col items-center gap-3 text-center px-6">
+                        <i data-lucide="volume-x" class="w-14 h-14 text-white"></i>
+                        <p class="text-white text-lg font-semibold">Clique para ativar o áudio</p>
+                        <p class="text-gray-400 text-xs max-w-xs">O navegador bloqueia áudio com reprodução automática. Um clique libera.</p>
+                    </div>
+                </div>
 
                 <!-- Empty/Waiting State Placeholder Overlay -->
                 <div id="videoPlaceholder" class="flex flex-col items-center justify-center p-8 text-center max-w-md z-10">

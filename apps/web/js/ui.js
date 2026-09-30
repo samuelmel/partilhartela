@@ -31,6 +31,7 @@ function initDOMElements() {
 
     remoteVideo: document.getElementById('remoteVideo'),
     remoteAudio: document.getElementById('remoteAudio'),
+    audioUnlockOverlay: document.getElementById('audioUnlockOverlay'),
     videoPlaceholder: document.getElementById('videoPlaceholder'),
     placeholderTitle: document.getElementById('placeholderTitle'),
     placeholderDesc: document.getElementById('placeholderDesc'),
@@ -220,6 +221,47 @@ function showViewerWaitingState(msg) {
   updateStatus('waiting', 'Aguardando Video');
 }
 
+/**
+ * Libera o audio no espectador.
+ *
+ * O Chrome bloqueia audio em autoplay sem gesto do usuario. Com a politica de
+ * autoplay, o stream chega mas o video fica mudo: sintoma de "o espectador nao
+ * escuta nada" que nao tem nada a ver com a captura no host.
+ */
+function setupAudioUnlock() {
+  const video = elements.remoteVideo;
+  const overlay = elements.audioUnlockOverlay;
+  if (!video || !overlay) return;
+
+  const unlock = () => {
+    video.muted = false;
+    video.play().then(() => {
+      overlay.classList.add('hidden');
+    }).catch(() => {
+      // Ainda bloqueado: deixa o overlay visivel.
+      overlay.classList.remove('hidden');
+    });
+  };
+
+  overlay.onclick = unlock;
+  video.onclick = () => {
+    if (video.paused || video.muted) unlock();
+  };
+
+  // Se o playback com audio foi recusado, mostra o overlay.
+  video.play().then(() => {
+    if (video.muted) overlay.classList.remove('hidden');
+  }).catch(() => {
+    overlay.classList.remove('hidden');
+  });
+}
+
+function hideAudioUnlock() {
+  if (elements.audioUnlockOverlay) {
+    elements.audioUnlockOverlay.classList.add('hidden');
+  }
+}
+
 function attachRemoteStream(stream) {
   elements.remoteVideo.srcObject = stream;
   elements.remoteVideo.muted = false;
@@ -227,6 +269,8 @@ function attachRemoteStream(stream) {
   elements.videoPlaceholder.classList.add('hidden');
   elements.liveOverlay.classList.remove('hidden');
   elements.liveOverlay.classList.add('flex');
+
+  setupAudioUnlock();
 
   const videoTrack = stream.getVideoTracks()[0];
   if (videoTrack) {
@@ -239,6 +283,12 @@ function attachRemoteStream(stream) {
 
   const audioTrack = stream.getAudioTracks()[0];
   if (audioTrack) {
+    // Diagnostico: confirma de onde o audio realmente vem.
+    const s = audioTrack.getSettings();
+    console.log('[audio] track recebida: label="' + audioTrack.label +
+      '" deviceId=' + s.deviceId + ' canais=' + s.channelCount +
+      ' sampleRate=' + s.sampleRate);
+
     elements.audioStatusText.textContent = 'Audio Recebido';
     elements.audioStatusIcon.setAttribute('data-lucide', 'volume-2');
     elements.audioStatusBadge.classList.remove('hidden');

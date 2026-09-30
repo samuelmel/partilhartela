@@ -219,7 +219,45 @@ conectar, o suspects é o limite do broker público do PeerJS, não a config de 
 
 ---
 
-## 10. Problemas comuns
+## 10. Áudio do sistema no fallback — o que é verdade
+
+Medido com `npm run probe:capture` nesta máquina:
+
+| Variante | deviceId | canais | EC/AGC/NS |
+|---|---|---|---|
+| `getUserMedia` áudio+vídeo, `sourceId` = tela | `loopback` | 2 | desligados |
+| `getUserMedia` áudio+vídeo, `sourceId` = **janela** | `loopback` | 2 | desligados |
+| `getDisplayMedia` + handler Electron | `loopback` | **1** | **ligados** |
+
+Duas conclusões que contrariam a intuição:
+
+1. **O fallback já captura áudio global.** No Electron o Chromium ignora o
+   `chromeMediaSourceId` do áudio e sempre devolve o loopback do dispositivo de
+   saída padrão (`deviceId: "loopback"`). Amarrar o áudio a uma janela **não**
+   restringe o áudio aquela janela.
+2. **Trocar para `getDisplayMedia` seria uma regressão.** O handler entrega a
+   mesma faixa em mono e com cancelamento de eco, supressão de ruído e AGC
+   **ligados** — o que degrada áudio de jogo e música.
+
+### "O espectador não escuta nada" — causa provável
+
+Não é a captura. Duas causas reais, na ordem de probabilidade:
+
+1. **Política de autoplay do Chrome.** O stream chega, mas o áudio só toca após
+   um gesto do usuário. A UI agora mostra um overlay **"Clique para ativar o
+   áudio"** quando o playback é recusado (`setupAudioUnlock()` em `ui.js`).
+2. **Som em outro dispositivo de saída.** O loopback captura apenas o
+   dispositivo de saída **padrão** do Windows. Se o YouTube toca em fone
+   enquanto o padrão são as caixas, não entra. Não há como contornar sem o
+   addon nativo.
+
+Diagnóstico rápido: abra o DevTools no espectador e veja o log
+`[audio] track recebida: ... deviceId=loopback`. Se aparecer, o áudio chegou e o
+problema é autoplay. Se não aparecer, o host não mandou faixa de áudio.
+
+---
+
+## 11. Problemas comuns
 
 | Problema | Causa / solução |
 |---|---|
@@ -227,6 +265,7 @@ conectar, o suspects é o limite do broker público do PeerJS, não a config de 
 | `npm install` falhou com erro de gyp | Afaste-se de caminhos com espaço, ou mantenha o build como opt-in (§6) |
 | Sala não conecta | Limite do broker público do PeerJS |
 | Áudio do Discord na transmissão | Adon não compilado ainda (§6); sem ele o app não isola |
-| Sem áudio no espectador | Chrome exige clique do usuário para liberar som (autoplay policy) |
+| Sem áudio no espectador | Política de autoplay do Chrome → clique no overlay "Clique para ativar o áudio" |
+| Áudio do sistema não entra | O loopback só captura o dispositivo de saída **padrão** |
 | Firefox sem áudio de tela | Limitação do Firefox — use Chrome/Edge |
 | Erro de sintaxe após editar HTML | Rode `npm run check` |

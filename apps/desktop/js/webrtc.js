@@ -497,10 +497,20 @@ function captureElectronScreen(utils) {
               showToast('Audio capturado com o Discord EXCLUIDO (' +
                 (audioPlan.excludedPids || []).length + ' PID).');
             } else {
-              const hasAudio = finalStream.getAudioTracks().length > 0;
-              showToast(hasAudio
-                ? 'Audio capturado junto com o video.'
-                : 'Video sem audio.');
+              const audioTrack = finalStream.getAudioTracks()[0];
+              if (audioTrack) {
+                const s = audioTrack.getSettings();
+                console.log('[audio] origem=' + audioTrack.label +
+                  ' deviceId=' + s.deviceId + ' canais=' + s.channelCount);
+                showToast(
+                  'Audio do sistema capturado (loopback do dispositivo de ' +
+                  'saida padrao). Para isolar o Discord, compile o addon ' +
+                  'nativo. Se um app tocar em outro dispositivo de saida, ' +
+                  'reinicie o compartilhamento.'
+                );
+              } else {
+                showToast('Video sem audio.');
+              }
             }
 
             return finish(finalStream);

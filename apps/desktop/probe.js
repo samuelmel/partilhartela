@@ -8,7 +8,7 @@
  */
 'use strict';
 
-const { app, BrowserWindow, ipcMain, desktopCapturer } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, session } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -17,7 +17,13 @@ const OUT = path.join(os.tmpdir(), 'streamp2p-probe.json');
 const RESULTS = [];
 
 let currentTest = '(nenhum)';
+let requestedSourceId = null;
 let win = null;
+
+ipcMain.handle('probe-set-target', (_e, id) => {
+  requestedSourceId = id;
+  return true;
+});
 
 function flush(exitCode) {
   try {
@@ -59,6 +65,23 @@ ipcMain.handle('probe-sources', async () => {
 });
 
 app.whenReady().then(() => {
+  // Handler de display media: e ele que impede o dialogo nativo e define
+  // o que 'loopback' significa. Sem ele, getDisplayMedia abriria um prompt.
+  session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+    desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
+      const picked = requestedSourceId
+        ? sources.find((s) => s.id === requestedSourceId)
+        : null;
+      const source = picked || sources[0];
+      console.log('HANDLER -> audioRequested=' + request.audioRequested +
+        ' video=' + (source ? source.name : 'nenhuma'));
+      callback({
+        video: source,
+        audio: request.audioRequested ? 'loopback' : undefined
+      });
+    });
+  });
+
   win = new BrowserWindow({
     width: 800,
     height: 600,
