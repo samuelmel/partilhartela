@@ -19,7 +19,7 @@
     "prebuild": "npm run sync:shared && npm run build:web",
     "build:native": "npm run build --workspace @streamp2p/native-audio",
     "rebuild:native": "npm run rebuild:electron --workspace @streamp2p/native-audio",
-    "postinstall": "npm run sync:shared && npm run build:web",
+    "postinstall": "npm run sync:shared",
     "pack": "npm run prebuild && electron-builder --dir --projectDir apps/desktop",
     "dist": "npm run prebuild && electron-builder --win --projectDir apps/desktop",
     "check": "node scripts/check-syntax.js"

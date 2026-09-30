@@ -1,198 +1,187 @@
 # StreamP2P — Compartilhamento de Tela P2P em HD
 
-Aplicativo Desktop (Electron) + versão Web de compartilhamento de tela **Peer-to-Peer** via WebRTC/PeerJS. Sem servidor de vídeo intermediário: o vídeo vai direto de navegador para navegador com criptografia DTLS/SRTP.
+Monorepo com **duas aplicações** (Electron desktop + cliente web) e **dois pacotes** (configuração compartilhada + addon nativo de áudio WASAPI).
 
-- **Qualidade:** até 1080p @ 60 FPS (presets: Padrão, Jogo, Filme, Personalizado)
-- **Áudio:** captura do áudio do sistema com filtro opcional que isola o som do Discord
-- **Sinalização:** PeerJS (IDs no formato `streamp2p-room-<codigo>`)
-- **Estados:** `isHost`, `isSharing`, `localStream`, `activeDataConns` (ver `js/config.js`)
+O vídeo vai direto de peer para peer via WebRTC/PeerJS, sem servidor de mídia. O áudio do sistema é capturado por um addon nativo C++ que **exclui o Discord por PID**, coisa que o Chromium não permite.
 
 ---
 
-## 1. Requisitos
+## 1. Arquitetura
 
-| Item | Versão |
-|---|---|
-| Node.js | 18+ (testado com 24) |
-| npm | 9+ |
-| Windows | 10/11 (build `electron-builder --win`) |
-| Navegador (modo web) | Chrome / Edge (recomendado), Firefox funciona com restrições de áudio |
-
----
-
-## 2. Instalação
-
-```bash
-npm install
+```
+streamp2p/
+├── apps/
+│   ├── desktop/                  # HOST em Electron
+│   │   ├── main.js               # janela, desktopCapturer, PIDs, ponte do addon
+│   │   ├── preload.js            # contextBridge (API mínima e explícita)
+│   │   ├── index.html            # HTML canônico do produto
+│   │   ├── smoke.js              # teste de integração do processo main
+│   │   ├── css/style.css
+│   │   └── js/
+│   │       ├── config.js         # estado global
+│   │       ├── ui.js             # DOM, toasts, modais, medidor
+│   │       ├── audio-native.js   # PCM -> MediaStreamTrack
+│   │       ├── webrtc.js         # PeerJS, captura, bitrate, replaceTrack
+│   │       ├── app.js            # rotas e listeners
+│   │       └── shared/           # cópia sincronizada de packages/shared
+│   └── web/                      # RECEPTOR (HTML/JS puro, sem deps nativas)
+│       ├── index.html            # gerado de apps/desktop/index.html
+│       └── js/{config,ui,webrtc,app}.js + shared/
+│
+├── packages/
+│   ├── shared/src/               # quality, signaling, utils, process-scan (UMD)
+│   └── native-audio/             # addon C++ (N-API + WASAPI)
+│       ├── binding.gyp
+│       ├── index.js              # loader com fallback graceful
+│       └── src/{audio_capturer.h,audio_capturer.cc}
+│
+├── scripts/
+│   ├── sync-shared.js            # copia packages/shared -> apps/*/js/shared
+│   ├── build-web-html.js         # gera apps/web/index.html a partir do desktop
+│   ├── check-syntax.js           # valida sintaxe + estrutura de todos os scripts
+│   └── serve.js                  # servidor estático local p/ apps/web
+│
+├── render.yaml                   # blueprint de deploy (Static Site)
+└── package.json                  # npm workspaces
 ```
 
-> Só há dependências de **desenvolvimento** (`electron` e `electron-builder`). As libs de frontend (Tailwind, PeerJS, Lucide, fontes) entram por CDN direto no `index.html` — por isso não existem em `dependencies`.
+`packages/shared` é a fonte canônica. Como o renderer não usa bundler (scripts via `<script src>`), o `sync:shared` copia os arquivos para dentro de cada app.
 
 ---
 
-## 3. Comandos npm
+## 2. Requisitos
+
+| Item | Versão | Observação |
+|---|---|---|
+| Node.js | 18+ (testado com 24) | headers do Node 24 exigem **C++20** |
+| npm | 9+ | usa workspaces |
+| Windows | 11 21H2+ (build 20348+) | para o modo `EXCLUDE_TARGET_PROCESS_TREE` do WASAPI |
+| Visual Studio Build Tools | 2022 com C++ e Windows SDK | **só para compilar o addon nativo** |
+| Navegador | Chrome / Edge | Firefox tem restrição de áudio |
+
+---
+
+## 3. Comandos
 
 | Comando | O que faz |
 |---|---|
-| `npm start` | Sobe o app Electron a partir do código (`electron .`) — **modo desenvolvimento** |
-| `npm run pack` | Gera uma versão descompactada em `dist/win-unpacked/` (testar sem instalar) |
-| `npm run dist` | Gera os instaladores finais do Windows em `dist/` |
+| `npm install` | Instala workspaces. **Não** compila o addon (ver §6) |
+| `npm start` | Sobe o app Electron (dev) |
+| `npm run start:web` | Serve `apps/web` em `http://127.0.0.1:5173` |
+| `npm run check` | Valida sintaxe de todos os JS + estrutura dos HTML |
+| `npm run sync:shared` | Sincroniza `packages/shared` para os apps |
+| `npm run build:web` | Regenera `apps/web/index.html` a partir do desktop |
+| `npm run build:native` | Compila o addon (contra o ABI do **Node**) |
+| `npm run rebuild:native` | Recompila contra o ABI do **Electron** (use este) |
+| `npm run pack` | Pacote descompactado em `dist/win-unpacked/` |
+| `npm run dist` | Instalador NSIS + portátil em `dist/` |
 
-### Saídas do `npm run dist`
-
-```
-dist/
-├── StreamP2P Setup 1.0.0.exe      # instalador NSIS (com passo a passo)
-├── StreamP2P 1.0.0.exe            # versão portátil (roda sem instalar)
-├── StreamP2P Setup 1.0.0.exe.blockmap
-├── latest.yml
-└── win-unpacked/                  # app descompactado
-```
-
-Para empacotar **outros sistemas** altere o bloco `build.targets` em `package.json`:
-
-```json
-"win": { "target": ["nsis", "portable"] }
-```
-
-Adicione, por exemplo, `"mac": { "target": ["dmg"] }` ou `"linux": { "target": ["AppImage"] }`.
+Sempre rode `npm run check` antes de commitar: ele pega erro de sintaxe, script referenciado inexistente, HTML com `<div>` desbalanceado e mojibake.
 
 ---
 
+## 4. Testar sozinho
 
-## 5. Como funciona o fluxo
+**Opção A — Electron + navegador**
+1. `npm start`, crie a sala
+2. Copie o link (aponta para `WEB_APP_URL` em `apps/desktop/js/config.js`)
+3. Abra no Chrome/Edge → entra como espectador
 
-1. **Criar sala** → gera código de 8 caracteres (`crypto.randomUUID().slice(0, 8)`) e navega para `index.html?sala=<codigo>`.
-2. **Host** → cria um PeerJS com ID `streamp2p-room-<codigo>`. Se o ID já estiver em uso, o mesmo código cai automaticamente para o modo espectador (`unavailable-id`).
-3. **Compartilhar** → `getDisplayMedia()` no navegador ou seletor nativo do Electron (com detecção do Discord).
-4. **Espectador** → abre o link com `?sala=<codigo>`, conecta via `peer.connect(hostPeerId)` e recebe a chamada WebRTC (`call.on('stream')`).
-5. **Bitrate adaptativo** → monitor a cada 4s (`startAdaptiveBitrateMonitor`) reduz/recupera o bitrate conforme perda de pacotes.
-
----
-
-## 6. Como testar (sozinho)
-
-A forma mais simples de testar sem segunda máquina:
-
-**Opção A — Electron + navegador (recomendado)**
-1. Rode `npm start` e crie a sala no app.
-2. Copie o link gerado (aponta para `https://streamp2p-zsv7.onrender.com/index.html?sala=...`).
-3. Abra o link no Chrome/Edge → ele entra automaticamente como **espectador**.
-4. Clique em *Iniciar Compartilhamento* no app.
-
-**Opção B — Dois navegadores**
-1. Abra a página sem `?sala=` e clique em *Criar Nova Sala* (abas anônimas ajudam).
-2. Copie o link e abra em outra aba/perfil.
-
-**Opção C — Dois Electron**
-```bash
-npm start
-```
-(basta iniciar duas instâncias com a mesma sala — a segunda vira espectador)
-
-> Dica: `F12` → aba **Console** mostra os logs de conexão (`Novo espectador conectado...`, `Stream de mídia recebido...`).
+**Opção B — dois navegadores**
+1. Abra `npm run start:web` em duas abas/ perfis
+2. Crie a sala numa e entre com o link na outra
 
 ---
 
-## 7. Modo x Modo: Electron vs Navegador
+## 5. Deploy no Render
 
-| Recurso | Electron (exe) | Navegador (web) |
+`apps/web` é site estático: sem build step, sem dependências. O `render.yaml` já define isso.
+
+Configuração no painel (**Settings → Build**):
+
+| Campo | Valor | Por quê |
 |---|---|---|
-| Captura de tela | `desktopCapturer` + seletor nativo com miniaturas | `navigator.mediaDevices.getDisplayMedia()` |
-| Áudio do sistema | Loopback forçado (`setDisplayMediaRequestHandler`) | 
-| Isolamento de Discord | Sim (detecta processos via `tasklist`, isola áudio por janela) | Não disponível |
-| Microfone | Sim | Sim |
-| Flags de GPU | `ignore-gpu-blocklist`, `force_high_performance_gpu`, etc. | Usa config padrão do navegador |
+| Root Directory | `apps/web` | Render roda tudo a partir daqui |
+| Build Command | *(vazio)* | não há build; e evita instalar o Electron (~200 MB) |
+| Publish Directory | `./` | relativo ao Root Directory |
+
+**O erro mais comum aqui:** com `Root Directory = apps/web`, o Publish Directory tem de ser `./`. Se você colocar `apps/web`, o Render procura `apps/web/apps/web` e falha. E `stream-p2p` (a pasta da estrutura antiga) **não existe mais** — se ele estiver no Publish Directory, o deploy quebra.
+
+Depois do primeiro deploy, atualize `WEB_APP_URL` em `apps/desktop/js/config.js` para a URL do Render.
+
+> O addon nativo **não vai para o Render**. Ele é C++ e só funciona no app Electron. No navegador não existe forma de excluir um app do áudio do sistema.
+
+**Caveat de sinalização:** sem `host` configurado, o PeerJS usa o broker público, que tem limite de ~4 peers por sala e instabilidade conhecida. Se a sala não conectar, o suspeito é o broker — não o código.
 
 ---
 
-## 8. Variáveis e constantes
+## 6. Addon nativo de áudio — **estado atual**
 
-| Constante | Arquivo | Descrição |
-|---|---|---|
-| `WEB_APP_URL` | `js/config.js` | URL pública usada no link compartilhável gerado pelo app desktop |
-| `qualityConfig` | `js/config.js` | Resolução/fps/bitrate/contentHint atuais (padrão 1080p60 @ 3.5 Mbps) |
-| `PRESETS` | `js/config.js` | `default`, `jogo`, `filme` |
-| `peer` | `js/config.js` | Instância PeerJS ativa |
+**Não compila ainda.** O código está escrito mas nunca passou pelo compilador com sucesso.
 
----
+O que já foi diagnosticado e corrigido no build:
+- include dir do `node-addon-api` (quebrado por **espaços no caminho** do projeto, que o MSBuild tokenizava)
+- C++17 → **C++20** (headers do Node 24 exigem)
 
-## 9. Isolamento de áudio (Discord e microfone)
+O que falta, segundo o SDK `10.0.26100` (`um/audioclientactivationparams.h`):
 
-### Por que o Discord vazava antes
-
-O áudio era capturado **sem `chromeMediaSourceId`** (`audio: { mandatory: { chromeMediaSource: 'desktop' } }`). Isso faz o Chromium devolver o **loopback do sistema inteiro** — a mixagem completa da sua placa de som, Discord incluído. Como o loopback sempre devolve uma track de áudio, o `break` do laço de "isolamento" disparava na primeira janela testada e o filtro nunca era aplicado.
-
-### O que foi corrigido
-
-| Cenário | Antes | Agora |
-|---|---|---|
-| Tela cheia + "Sistema Limpo" | Loopback do sistema (Discord vazava) | Áudio por janela, com `chromeMediaSourceId`. Sem áudio isolado → **fica sem áudio**, nunca com loopback |
-| Captura de janela | Loopback do sistema (Discord vazava) | Áudio **só daquela janela** (`chromeMediaSourceId` da janela) |
-| Capturar a janela do Discord | Permitido | **Bloqueado** com aviso |
-| `main.js` handler | Forçava `audio: 'loopback'` sempre | Só anexa loopback se o renderer pediu (`request.audioRequested`) |
-
-O microfone também fica fora automaticamente: ele nunca entra na captura por janela. Se quiser o microfone, use o botão **Microfone** da barra de ferramentas (ele é adicionado como track separada).
-
-### Ordenação de tentativas do áudio isolado (tela cheia)
-
-1. Janelas sem Discord e sem ser o próprio StreamP2P (até 8)
-2. Cada tentativa tem **timeout de 1,2 s** — uma janela travada não segura o processo
-3. Nenhumavento com som → segue sem áudio e avisa (nunca cai em loopback)
-
-### Limitação real do Windows
-
-Não existe API no Windows para excluir um app específico de uma captura *loopback*. Por isso o app usa captura **por janela**, que é a única forma determinística. Se você quiser o áudio de tela cheia com TODO o som do PC (inclusive Discord), selecione **"Todo o Som do PC"** no seletor — aí é loopback de propósito.
-
-Complemento opcional no OS: Som → **Gravação** → Microfone → Propriedades → **Escutar** → "Não escutar".
-
-## 10. Travamentos corrigidos
-
-| Travamento | Causa | Correção |
-|---|---|---|
-| Congela ao escolher "Tela Inteira" | Laço `for` chamava `getUserMedia` para **cada janela aberta**, sem timeout, cada uma disparando captura de desktop completa | `withTimeout()` em todas as capturas + limite de 8 candidatas |
-| Congela do nada durante a transmissão | `setupAudioMeter` criava um novo `MediaStreamSource` a cada chamada sem desconectar o anterior | Desconecta o source anterior e retoma `AudioContext` suspenso |
-| Travamento de tracks órfãs | Se a captura da tela falhasse no meio, as tracks ficavam ativas | `stopAllTracks()` no `catch` e em resoluções tardias (`onLateResolve`) |
-| Travamento no navegador | `displaySurface: "monitor"` + timeout de 15 s (seção 12) | — |
-
----
-
-## 11. Deploy da versão Web
-
-A pasta `stream-p2p/` é a cópia publicada no Render (`WEB_APP_URL = https://streamp2p-zsv7.onrender.com`).
-
-Para atualizar a versão web:
-
-1. Copie os arquivos alterados para dentro de `stream-p2p/`:
-   ```bash
-   xcopy /E /Y js stream-p2p\js
-   xcopy /E /Y css stream-p2p\css
-   copy /Y index.html stream-p2p\index.html
-   ```
-2. Faça o deploy dessa pasta no Render (ou reenvie via git).
-
-> Se alterou `js/*.js`, lembre-se de refletir a mudança em `stream-p2p/js/` — o desktop usa a raiz, a web usa a cópia.
-
----
-
-## 12. Segurança
-
-- `nodeIntegration: false`, `contextIsolation: true`, `sandbox: false` (necessário para o preload de captura).
-- Comunicação só via `ipcRenderer.invoke` / `ipcMain.handle`.
-- Sem armazenamento de dados em servidor — tudo é P2P.
-
----
-
-## 13. Problemas comuns
-
-| Problema | Causa / Solução |
+| Código atual | API real |
 |---|---|
-| `ID do Host já ocupado` | Outra pessoa (ou outra aba) já usa a mesma sala — na prática isso **conecta como espectador** |
-| Firefox não capta áudio de tela inteira | Limitação do Firefox — usar Chrome/Edge |
-| Tela travada no navegador | `displaySurface: "monitor"` removido + timeout (seção 10) |
-| Voz do Discord na transmissão | Use "Sistema Limpo (Sem Discord)" — a captura é por janela (seção 9) |
-| Tela cheia sem áudio | Nenhum app tocando som. Se quiser TODO o som, escolha "Todo o Som do PC" |
-| Travamento ao escolher Tela Inteira | Corrigido com timeouts (seção 10). Reinicie o app para pegar a versão nova |
-| Sem áudio no espectador | Chrome exige que o espectador clique para ativar o som (autoplay policy) |
-| `npm run dist` falha | Verifique se `electron-builder` está instalado: `npm install` |
-| Link da sala não abre a sala | O link precisa conter `?sala=<codigo>` — lembre-se de subir o `stream-p2p/` atualizado no Render |
+| só `audioclient.h` | precisa de `<audioclientactivationparams.h>` |
+| `ProcessCount` + `ProcessIds[]` | `DWORD TargetProcessId` — **um PID por ativação** |
+| `PROCESS_LOOPBACK_MODE_EXCLUDE` | `PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE` |
+| `VIRTUAL_AUDIO_CAPTURE_PROCESS_LOOPBACK` | `VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK` + `ActivateAudioInterfaceAsync(LPCWSTR, ...)` |
+| `prop.blob.cbData` | `BLOB` usa `cbSize` |
+
+**A boa notícia:** o modo real é `EXCLUDE_TARGET_PROCESS_TREE` — excluir o PID **raiz** do Discord remove a árvore inteira de filhos. Existe um `Discord.exe` rodando aí com 6 processos; basta identificar o PID raiz (o cujo pai não é outro Discord) e ativar **uma** captura.
+
+### Como compilar
+
+1. Instale **Visual Studio Build Tools 2022** com:
+   - "Desenvolvimento para Desktop com C++"
+   - Windows 10/11 SDK
+2. No diretório **sem espaços no caminho** (o MSBuild do gyp tokeniza mal):
+   ```bash
+   npm run build:native      # compila
+   npm run rebuild:native    # rebuild contra o Electron
+   ```
+
+### Por que o build é manual
+
+O `install` do pacote nativo é um no-op de propósito: `npm install` compilaria contra o ABI do Node, e o addon precisa do ABI do Electron. Além disso, o app tem **fallback graceful** — sem o binário, ele funciona igual, só sem o filtro de áudio do Discord. Um passo opcional não pode quebrar a instalação.
+
+Status do fallback (verificado em `apps/desktop/smoke.js`):
+```json
+{"loaded":false,"supported":false,"build":26200,"requiredBuild":20348,
+ "reason":"Binario nativo nao encontrado. Rode: npm run build:native"}
+```
+
+---
+
+## 7. Como o áudio é isolado
+
+1. `main.js` lista os PIDs do Discord via `tasklist` (zero dependências; `ps-list` seria brought down)
+2. O renderer pede esses PIDs via IPC e inicia o addon com eles
+3. O addon ativa o WASAPI em `EXCLUDE_TARGET_PROCESS_TREE` e entrega PCM s16 via ThreadSafeFunction
+4. `main.js` reencaminha os pacotes ao renderer; `audio-native.js` monta um `AudioData` e escreve num `MediaStreamTrackGenerator`
+5. A track entra na `MediaStream` enviada aos espectadores
+
+Se o Discord **abrir ou fechar durante a transmissão**, basta reiniciar a captura — `replaceAudioTrackOnSenders()` troca a track nos senders existentes sem reconectar os espectadores.
+
+Microfone: nunca entra na captura do sistema (o botão **Microfone** adiciona uma track separada, se você quiser).
+
+**Limitação honesta:** não existe API no Windows para excluir um app de um *loopback* comum. O modo determinístico é o process-loopback do addon. No navegador isso é impossível.
+
+---
+
+## 8. Problemas comuns
+
+| Problema | Causa / solução |
+|---|---|
+| `Publish directory ... does not exist` | Publish Directory é `./` (não `apps/web`), e `stream-p2p` não existe mais |
+| `npm install` falhou com erro de gyp | Afaste-se de caminhos com espaço, ou mantenha o build como opt-in (§6) |
+| Sala não conecta | Limite do broker público do PeerJS |
+| Áudio do Discord na transmissão | Adon não compilado ainda (§6); sem ele o app não isola |
+| Sem áudio no espectador | Chrome exige clique do usuário para liberar som (autoplay policy) |
+| Firefox sem áudio de tela | Limitação do Firefox — use Chrome/Edge |
+| Erro de sintaxe após editar HTML | Rode `npm run check` |

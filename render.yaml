@@ -1,0 +1,24 @@
+# Blueprint de deploy do StreamP2P (Render)
+#
+# Site estatico: apps/web nao tem build step (HTML/JS puro via CDN).
+# Por isso o rootDir aponta direto para apps/web, o que tambem evita que o
+# Render instale o Electron (peso de ~200MB) na maquina de build.
+#
+# IMPORTANTE: com rootDir = apps/web, o Publish Directory e relativo a ele.
+# Deve ser "./" e NAO "apps/web" (senao o Render procura apps/web/apps/web).
+
+services:
+  - type: web
+    name: streamp2p
+    runtime: static
+    rootDir: apps/web
+    buildCommand: ""
+    staticPublishPath: ./
+    # Filtra o auto-deploy: so redeploy quando o cliente web mudar.
+    buildFilter:
+      paths:
+        - apps/web/**
+        - scripts/sync-shared.js
+        - packages/shared/src/quality.js
+        - packages/shared/src/signaling.js
+        - packages/shared/src/utils.js

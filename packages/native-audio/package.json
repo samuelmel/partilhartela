@@ -5,6 +5,7 @@
   "main": "index.js",
   "private": true,
   "scripts": {
+    "install": "node -e \"process.stdout.write('addon nativo: build manual (npm run build:native)\\n')\"",
     "build": "node-gyp rebuild",
     "build:debug": "node-gyp rebuild --debug",
     "rebuild:electron": "electron-rebuild -f -w streamp2p_audio",
@@ -15,6 +16,5 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0"
-  },
-  "gypfile": true
+  }
 }
