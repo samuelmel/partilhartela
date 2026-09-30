@@ -64,14 +64,21 @@ function initRoomView(targetRoomId) {
     }
 
     elements.displayRoomId.textContent = targetRoomId;
-    elements.shareUrlInput.value = window.location.href;
+
+    // Se estiver no aplicativo Electron, gera o link web apontando para o Render
+    const isApp = window.electronAPI && window.electronAPI.isElectron;
+    const shareUrl = isApp 
+        ? `${WEB_APP_URL}/index.html?sala=${encodeURIComponent(targetRoomId)}`
+        : window.location.href;
+
+    elements.shareUrlInput.value = shareUrl;
 
     // 1-Click Copy Link Handler
     elements.btnCopyLink.addEventListener('click', () => {
-        navigator.clipboard.writeText(window.location.href).then(() => {
+        navigator.clipboard.writeText(shareUrl).then(() => {
             elements.copyBtnText.textContent = 'Copiado!';
             elements.btnCopyLink.classList.replace('bg-brand-600', 'bg-emerald-600');
-            showToast('Link da sala copiado para a área de transferência!');
+            showToast('Link web da sala copiado! Seu amigo pode abrir direto no navegador.');
             setTimeout(() => {
                 elements.copyBtnText.textContent = 'Copiar Link';
                 elements.btnCopyLink.classList.replace('bg-emerald-600', 'bg-brand-600');

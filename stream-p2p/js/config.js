@@ -5,6 +5,9 @@
 // Active Selected Quality Preset Mode: 'default' | 'jogo' | 'filme' | 'custom'
 let currentMode = 'default';
 
+// URL Oficial da Web no Render para compartilhamento com quem assiste no navegador
+const WEB_APP_URL = 'https://streamp2p-zsv7.onrender.com';
+
 // Global Quality Configuration Object (Default: 1080p60 @ 6 Mbps, Motion)
 const qualityConfig = {
     height: 1080,
