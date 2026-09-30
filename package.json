@@ -1,0 +1,44 @@
+{
+  "name": "streamp2p-desktop",
+  "version": "1.0.0",
+  "description": "Aplicativo Desktop de Compartilhamento de Tela P2P em Alta Definição",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win"
+  },
+  "keywords": [
+    "webrtc",
+    "screenshare",
+    "p2p",
+    "electron"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^44.5.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.streamp2p.desktop",
+    "productName": "StreamP2P",
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "css/**/*",
+      "js/**/*"
+    ]
+  }
+}

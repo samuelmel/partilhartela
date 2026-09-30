@@ -14,7 +14,10 @@ function setupPeerJS(targetRoomId) {
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' }
+                { urls: 'stun:stun2.l.google.com:19302' },
+                { urls: 'stun:stun3.l.google.com:19302' },
+                { urls: 'stun:stun4.l.google.com:19302' },
+                { urls: 'stun:global.stun.twilio.com:3478' }
             ]
         }
     });
@@ -78,7 +81,10 @@ function setupAsViewer(targetRoomId, hostPeerId) {
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' }
+                { urls: 'stun:stun2.l.google.com:19302' },
+                { urls: 'stun:stun3.l.google.com:19302' },
+                { urls: 'stun:stun4.l.google.com:19302' },
+                { urls: 'stun:global.stun.twilio.com:3478' }
             ]
         }
     });
@@ -162,14 +168,24 @@ async function toggleScreenSharing() {
 
         updateStatus('connecting', 'Aguardando seleção de tela...');
 
-        try {
-            localStream = await navigator.mediaDevices.getDisplayMedia(displayMediaOptions);
-        } catch (fallbackErr) {
-            console.warn('Constraints específicas rejeitadas, tentando modo padrão...', fallbackErr);
-            localStream = await navigator.mediaDevices.getDisplayMedia({
-                video: true,
-                audio: true
-            });
+        // Se estiver rodando dentro do aplicativo Electron, usa a API nativa
+        if (window.electronAPI && window.electronAPI.isElectron) {
+            localStream = await captureElectronScreen();
+            if (!localStream) {
+                updateStatus('waiting', 'Captura cancelada');
+                return;
+            }
+        } else {
+            // Modo Web/Navegador tradicional
+            try {
+                localStream = await navigator.mediaDevices.getDisplayMedia(displayMediaOptions);
+            } catch (fallbackErr) {
+                console.warn('Constraints específicas rejeitadas, tentando modo padrão...', fallbackErr);
+                localStream = await navigator.mediaDevices.getDisplayMedia({
+                    video: true,
+                    audio: true
+                });
+            }
         }
 
         isSharing = true;
@@ -403,3 +419,93 @@ function applyContentHint(hint) {
         videoTrack.contentHint = hint;
     }
 }
+
+// Captura de tela nativa no Electron via desktopCapturer
+function captureElectronScreen() {
+    return new Promise(async (resolve) => {
+        try {
+            const sources = await window.electronAPI.getDesktopSources();
+            if (!sources || sources.length === 0) {
+                showToast('Nenhuma tela ou janela encontrada.');
+                return resolve(null);
+            }
+
+            elements.sourcesGrid.innerHTML = '';
+
+            sources.forEach(src => {
+                const card = document.createElement('div');
+                card.className = 'glass-panel p-2.5 rounded-xl border border-gray-800 hover:border-brand-500 cursor-pointer flex flex-col gap-2 group transition-all hover:bg-gray-800/60';
+                card.innerHTML = `
+                    <div class="relative w-full aspect-video rounded-lg overflow-hidden bg-black/80 flex items-center justify-center">
+                        <img src="${src.thumbnail}" class="w-full h-full object-contain" alt="${src.name}" />
+                    </div>
+                    <div class="flex items-center gap-2">
+                        ${src.appIcon ? `<img src="${src.appIcon}" class="w-4 h-4 rounded" />` : ''}
+                        <span class="text-xs text-gray-200 font-medium truncate" title="${src.name}">${src.name}</span>
+                    </div>
+                `;
+
+                card.onclick = async () => {
+                    elements.electronSourceModal.classList.add('hidden');
+                    try {
+                        const stream = await navigator.mediaDevices.getUserMedia({
+                            audio: {
+                                mandatory: {
+                                    chromeMediaSource: 'desktop'
+                                }
+                            },
+                            video: {
+                                mandatory: {
+                                    chromeMediaSource: 'desktop',
+                                    chromeMediaSourceId: src.id,
+                                    maxWidth: qualityConfig.width,
+                                    maxHeight: qualityConfig.height,
+                                    maxFrameRate: qualityConfig.fps
+                                }
+                            }
+                        });
+                        resolve(stream);
+                    } catch (err) {
+                        console.error('Erro ao capturar fonte do Electron:', err);
+                        // Fallback sem áudio se o loopback falhar
+                        try {
+                            const videoOnlyStream = await navigator.mediaDevices.getUserMedia({
+                                audio: false,
+                                video: {
+                                    mandatory: {
+                                        chromeMediaSource: 'desktop',
+                                        chromeMediaSourceId: src.id,
+                                        maxWidth: qualityConfig.width,
+                                        maxHeight: qualityConfig.height,
+                                        maxFrameRate: qualityConfig.fps
+                                    }
+                                }
+                            });
+                            resolve(videoOnlyStream);
+                        } catch (vErr) {
+                            showToast('Erro ao iniciar captura da janela selecionada.');
+                            resolve(null);
+                        }
+                    }
+                };
+
+                elements.sourcesGrid.appendChild(card);
+            });
+
+            elements.electronSourceModal.classList.remove('hidden');
+
+            const closeModal = () => {
+                elements.electronSourceModal.classList.add('hidden');
+                resolve(null);
+            };
+
+            elements.btnCloseSourceModal.onclick = closeModal;
+            elements.btnCancelSourceModal.onclick = closeModal;
+
+        } catch (err) {
+            console.error('Erro ao listar fontes no Electron:', err);
+            resolve(null);
+        }
+    });
+}
+

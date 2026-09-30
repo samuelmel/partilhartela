@@ -84,7 +84,13 @@ function initDOMElements() {
         audioMeterBar: document.getElementById('audioMeterBar'),
 
         toastNotification: document.getElementById('toastNotification'),
-        toastMessage: document.getElementById('toastMessage')
+        toastMessage: document.getElementById('toastMessage'),
+
+        // Electron Screen Picker Modal
+        electronSourceModal: document.getElementById('electronSourceModal'),
+        sourcesGrid: document.getElementById('sourcesGrid'),
+        btnCloseSourceModal: document.getElementById('btnCloseSourceModal'),
+        btnCancelSourceModal: document.getElementById('btnCancelSourceModal')
     };
 }
 

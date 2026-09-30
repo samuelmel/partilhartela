@@ -491,6 +491,41 @@
         </div>
     </div>
 
+    <!-- ELECTRON NATIVE SCREEN / WINDOW PICKER MODAL -->
+    <div id="electronSourceModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md hidden flex items-center justify-center p-4">
+        <div class="glass-panel w-full max-w-3xl max-h-[85vh] rounded-2xl p-6 border border-gray-800 shadow-2xl relative flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-200">
+            <div class="flex items-center justify-between border-b border-gray-800 pb-3">
+                <div class="flex items-center gap-3">
+                    <div class="w-9 h-9 rounded-xl bg-brand-500/10 border border-brand-500/20 flex items-center justify-center text-brand-400">
+                        <i data-lucide="monitor" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-base font-bold text-gray-100">Escolha o que deseja compartilhar</h3>
+                        <p class="text-xs text-gray-400">Selecione uma tela inteira ou janela de aplicativo (jogos, filmes, etc.)</p>
+                    </div>
+                </div>
+                <button id="btnCloseSourceModal" class="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-gray-800 transition-colors">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <!-- Grid de telas e janelas -->
+            <div id="sourcesGrid" class="grid grid-cols-2 sm:grid-cols-3 gap-3 overflow-y-auto max-h-[55vh] p-1">
+                <!-- Preenchido dinamicamente via JS -->
+            </div>
+
+            <div class="flex items-center justify-between border-t border-gray-800 pt-3">
+                <span class="text-xs text-gray-400 flex items-center gap-1.5">
+                    <i data-lucide="volume-2" class="w-4 h-4 text-emerald-400"></i>
+                    Áudio do sistema integrado automaticamente
+                </span>
+                <button id="btnCancelSourceModal" class="px-4 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-medium transition-colors">
+                    Cancelar
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- FOOTER -->
     <footer class="w-full border-t border-gray-800/60 py-4 text-center text-xs text-gray-500 glass-panel mt-auto">
         <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
