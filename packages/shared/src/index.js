@@ -6,10 +6,10 @@
  */
 'use strict';
 
-const quality = require('./src/quality');
-const signaling = require('./src/signaling');
-const utils = require('./src/utils');
-const processScan = require('./src/process-scan');
+const quality = require('./quality');
+const signaling = require('./signaling');
+const utils = require('./utils');
+const processScan = require('./process-scan');
 
 module.exports = {
   Quality: quality,

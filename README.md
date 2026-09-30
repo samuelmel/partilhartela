@@ -99,7 +99,7 @@ npm start
 | Recurso | Electron (exe) | Navegador (web) |
 |---|---|---|
 | Captura de tela | `desktopCapturer` + seletor nativo com miniaturas | `navigator.mediaDevices.getDisplayMedia()` |
-| Áudio do sistema | Loopback forçado (`setDisplayMediaRequestHandler`) | Depende do que o navegador oferecer no prompt |
+| Áudio do sistema | Loopback forçado (`setDisplayMediaRequestHandler`) | 
 | Isolamento de Discord | Sim (detecta processos via `tasklist`, isola áudio por janela) | Não disponível |
 | Microfone | Sim | Sim |
 | Flags de GPU | `ignore-gpu-blocklist`, `force_high_performance_gpu`, etc. | Usa config padrão do navegador |

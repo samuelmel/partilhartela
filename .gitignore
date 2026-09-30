@@ -5,7 +5,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Compilações e Executáveis do Electron
+# Artefatos de build
 dist/
 build/
 out/
@@ -14,6 +14,9 @@ out/
 *.AppImage
 *.deb
 *.rpm
+
+# Binários do addon nativo (gerados por node-gyp)
+packages/native-audio/build/
 
 # Arquivos de Sistema e IDEs
 .DS_Store
