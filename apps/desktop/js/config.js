@@ -24,6 +24,9 @@ let isAudioMuted = false;
 let isMicActive = false;
 let currentMode = 'default';
 
+/** Id da fonte de captura escolhida (tela ou janela). Usado para re-capturar audio. */
+let currentSourceId = null;
+
 // Estado do Web Audio
 let audioContext = null;
 let audioAnalyser = null;

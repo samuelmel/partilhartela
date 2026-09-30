@@ -99,6 +99,36 @@ function isExternal(href) {
   return /^(https?:)?\/\//i.test(href) || /^(data|mailto):/i.test(href);
 }
 
+/**
+ * GUARDA: getUserMedia com audio de desktop e video:false derruba o renderer
+ * do Electron (bad_message.cc, reason 263). Ver README secao 8 e o teste C de
+ * `npm run probe:capture`.
+ *
+ * Procura o padrao em codigo real, ignorando comentarios e strings.
+ */
+function checkDesktopAudioOnly(source, relative) {
+  const problems = [];
+
+  // Remove comentarios de bloco e de linha para nao acusar a documentacao.
+  const code = source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:'"\\])\/\/.*$/gm, '$1');
+
+  // audio de desktop + video ausente ou false, dentro de um getUserMedia.
+  const suspicious = /getUserMedia\s*\(\s*\{[\s\S]{0,400}?audio\s*:\s*\{[\s\S]{0,300}?chromeMediaSource\s*:\s*'desktop'[\s\S]{0,400}?\}\s*,\s*video\s*:\s*false/g;
+
+  let match;
+  while ((match = suspicious.exec(code)) !== null) {
+    const line = code.slice(0, match.index).split('\n').length;
+    problems.push(
+      'getUserMedia com audio de desktop e video:false (linha ' + line +
+      ') derruba o renderer. Peca audio e video juntos.'
+    );
+  }
+
+  return problems;
+}
+
 function checkFile(file) {
   const relative = rel(file);
   const source = fs.readFileSync(file, 'utf8');
@@ -129,6 +159,7 @@ function checkFile(file) {
   if (RENDERER_PREFIXES.some((p) => relative.startsWith(p))) {
     checkEncoding(file, source).forEach((p) => problems.push(p));
     checkSuspiciousWords(file, source).forEach((p) => problems.push(p));
+    checkDesktopAudioOnly(source, relative).forEach((p) => problems.push(p));
   }
 
   const ok = problems.length === 0;

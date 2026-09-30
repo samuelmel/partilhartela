@@ -203,6 +203,24 @@ recae para vídeo apenas (`apps/desktop/js/webrtc.js`, bloco `resolveAudioStrate
 + `card.onclick`). O teste C do probe está comentado de propósito: descomentar
 reproduz o crash.
 
+**Guarda automática:** `npm run check` falha se alguém reintroduzir o padrão
+perigoso (`getUserMedia` com `audio` de desktop e `video: false`), ignorando
+comentários para não acusar a própria documentação. Verificado nos dois
+sentidos: o arquivo real passa, e um arquivo com o padrão injetado é reprovado.
+
+### Recuperar o áudio sem derrubar a transmissão
+
+O botão de áudio, quando a stream não tem faixa de áudio, tenta
+`recaptureSystemAudio()`: pede **áudio + vídeo juntos** com o mesmo `sourceId`
+(caminho comprovado), fica só com a faixa de áudio e descarta a de vídeo. Depois
+usa `replaceTrack()` nos senders existentes. O botão nunca fica ambíguo:
+`applyAudioTrackState()` sincroniza ícone, texto e badge com as tracks reais, e
+desabilita o controle quando não há áudio.
+
+Se a conexão foi negociada só com vídeo (sem *m-line* de áudio), o espectador
+precisa de uma renegociação — o PeerJS nem sempre faz isso. Nesse caso o toast
+avisa para reiniciar o compartilhamento.
+
 ## 9. Sobre os TURN do PeerJS
 
 ```

@@ -222,6 +222,53 @@ function showViewerWaitingState(msg) {
 }
 
 /**
+ * Sincroniza os controles de audio com as tracks REAIS da stream.
+ *
+ * Um botao que mostra "Audio Ativo" sem nenhuma faixa de audio e o que
+ * produz a confusao "Nenhum canal de audio capturado": o usuario clica em
+ * algo que parece ativo, mas nao existe track para mutar.
+ *
+ * @param {boolean} hasAudio
+ */
+function applyAudioTrackState(hasAudio) {
+  const btn = elements.btnToggleAudio;
+  const badge = elements.audioStatusBadge;
+
+  // O espectador controla o mute local do video recebido: nao se aplica.
+  if (isHost) {
+    if (btn) {
+      btn.disabled = !hasAudio;
+      btn.classList.toggle('opacity-50', !hasAudio);
+      btn.classList.toggle('cursor-not-allowed', !hasAudio);
+      btn.title = hasAudio
+        ? 'Silenciar ou reativar o audio da transmissao'
+        : 'Sem audio capturado: clique para tentar recuperar';
+    }
+  }
+
+  if (hasAudio) {
+    elements.iconToggleAudio.setAttribute('data-lucide', 'volume-2');
+    elements.iconToggleAudio.className = 'w-4 h-4 text-emerald-400';
+    elements.textToggleAudio.textContent = isAudioMuted ? 'Audio Mudo' : 'Audio Ativo';
+    elements.audioStatusText.textContent = isAudioMuted ? 'Audio Desativado' : 'Audio Ativo';
+    elements.audioStatusIcon.setAttribute('data-lucide', isAudioMuted ? 'volume-x' : 'volume-2');
+    if (badge) badge.classList.remove('hidden');
+  } else {
+    elements.iconToggleAudio.setAttribute('data-lucide', 'volume-x');
+    elements.iconToggleAudio.className = 'w-4 h-4 text-gray-500';
+    elements.textToggleAudio.textContent = 'Sem Audio';
+    elements.audioStatusText.textContent = 'Sem Audio do Sistema';
+    elements.audioStatusIcon.setAttribute('data-lucide', 'volume-x');
+    if (badge) {
+      badge.classList.remove('hidden');
+      badge.classList.add('opacity-70');
+    }
+  }
+
+  refreshIcons();
+}
+
+/**
  * Libera o audio no espectador.
  *
  * O Chrome bloqueia audio em autoplay sem gesto do usuario. Com a politica de

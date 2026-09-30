@@ -320,13 +320,9 @@ async function toggleScreenSharing() {
     const audioTrack = localStream.getAudioTracks()[0];
     if (audioTrack) {
       setupAudioMeter(localStream);
-      elements.audioStatusText.textContent = 'Audio Ativo';
-      elements.audioStatusIcon.setAttribute('data-lucide', 'volume-2');
-      elements.audioStatusBadge.classList.remove('hidden');
-    } else {
-      elements.audioStatusText.textContent = 'Sem Audio';
-      elements.audioStatusIcon.setAttribute('data-lucide', 'volume-x');
     }
+    // Sincroniza botao, badge e icone com as tracks REAIS da stream.
+    applyAudioTrackState(Boolean(audioTrack));
 
     elements.iconToggleShare.setAttribute('data-lucide', 'square');
     elements.textToggleShare.textContent = 'Interromper Transmissao';
@@ -417,6 +413,10 @@ function captureElectronScreen(utils) {
               showToast('Captura do Discord bloqueada para nao transmitir a voz de ninguem.');
               return finish(null);
             }
+
+            // Guarda a fonte escolhida: permite re-capturar o audio depois
+            // sem derrubar a transmissao inteira.
+            currentSourceId = src.id;
 
             // 1. Decide a estrategia de audio ANTES de capturar.
             //    Sem o addon nativo, o audio precisa vir na MESMA chamada do
@@ -554,6 +554,10 @@ function escapeHtml(value) {
 
 function stopScreenSharing() {
   teardownAudioMeter();
+  isAudioMuted = false;
+  currentSourceId = null;
+  // Libera o botao para a proxima transmissao poder tentar audio de novo.
+  applyAudioTrackState(false);
 
   if (localStream) {
     localStream.getTracks().forEach((track) => {
@@ -598,12 +602,127 @@ function stopScreenSharing() {
 // Controles de audio
 // ---------------------------------------------------------------------------
 
-function toggleAudioTrack() {
+/**
+ * Re-captura o audio do sistema durante a transmissao.
+ *
+ * IMPORTANTE: nunca chamar getUserMedia com audio de desktop e video:false.
+ * No Electron isso derruba o renderer (bad_message.cc, reason 263) - ver
+ * README secao 8 e o teste C de `npm run probe:capture`.
+ *
+ * O caminho seguro e pedir audio E video juntos com o mesmo sourceId (teste B
+ * do probe, comprovado), ficar so com a faixa de audio e descartar a de video.
+ *
+ * @returns {Promise<?MediaStreamTrack>}
+ */
+async function recaptureSystemAudio() {
+  if (!currentSourceId) {
+    return null;
+  }
+
+  const Utils = window.StreamP2P ? window.StreamP2P.Utils : null;
+  const stopAllTracks = Utils
+    ? Utils.stopAllTracks
+    : (s) => s && s.getTracks && s.getTracks().forEach((t) => t.stop());
+
+  // Caminho 1: audio+video juntos (seguro, estéreo, sem processamento).
+  try {
+    const temp = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        mandatory: {
+          chromeMediaSource: 'desktop',
+          chromeMediaSourceId: currentSourceId,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false
+        }
+      },
+      video: {
+        mandatory: {
+          chromeMediaSource: 'desktop',
+          chromeMediaSourceId: currentSourceId,
+          maxWidth: 320,
+          maxHeight: 180,
+          maxFrameRate: 5
+        }
+      }
+    });
+
+    const track = temp.getAudioTracks()[0];
+    if (track) {
+      // A faixa de video era so um placebo para Satisfazer o Chromium.
+      temp.getVideoTracks().forEach((t) => t.stop());
+      const s = track.getSettings();
+      console.log('[audio] re-capturado: label="' + track.label +
+        '" deviceId=' + s.deviceId + ' canais=' + s.channelCount);
+      return track;
+    }
+    stopAllTracks(temp);
+  } catch (err) {
+    console.warn('[audio] re-captura conjunta falhou:', err);
+  }
+
+  // Caminho 2: getDisplayMedia, que passa pelo handler do main.
+  // Entrega loopback em mono e com EC/AGC/NS ligados - pior qualidade, mas
+  // melhor que ficar sem audio.
+  try {
+    const temp = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: true
+    });
+
+    const track = temp.getAudioTracks()[0];
+    if (track) {
+      temp.getVideoTracks().forEach((t) => t.stop());
+      console.warn('[audio] re-captura via getDisplayMedia (mono, com ' +
+        'processamento automatico).');
+      return track;
+    }
+    stopAllTracks(temp);
+  } catch (err) {
+    console.warn('[audio] re-captura via getDisplayMedia falhou:', err);
+  }
+
+  return null;
+}
+
+async function toggleAudioTrack() {
   if (!isHost || !localStream) return;
 
-  const audioTracks = localStream.getAudioTracks();
+  let audioTracks = localStream.getAudioTracks();
+
+  // Sem faixa de audio: tenta recuperar antes de desistir.
   if (audioTracks.length === 0) {
-    showToast('Nenhum canal de audio capturado nesta sessao.');
+    updateStatus('connecting', 'Recuperando audio do sistema...');
+    elements.btnToggleAudio.disabled = true;
+
+    const recovered = await recaptureSystemAudio();
+
+    if (recovered) {
+      localStream.addTrack(recovered);
+      audioTracks = localStream.getAudioTracks();
+
+      const pushed = await replaceAudioTrackOnSenders(recovered);
+
+      applyAudioTrackState(true);
+
+      // O espectador so recebe se a conexao ja tiver um m-line de audio.
+      // Sem ele, e preciso renegociar; o PeerJS nem sempre consegue.
+      showToast(pushed > 0
+        ? 'Audio do sistema recuperado e adicionado a transmissao (' +
+          pushed + ' conexao(oes)).'
+        : 'Audio recuperado localmente. Se o espectador nao ouvir, ' +
+          'reinicie o compartilhamento para a renegociacao.');
+
+      updateStatus('sharing', 'Transmitindo Ao Vivo');
+      refreshIcons();
+      return;
+    }
+
+    applyAudioTrackState(false);
+    showToast(
+      'Nao foi possivel capturar o audio do sistema. ' +
+      'Verifique as permissoes de som do Windows ou reinicie o compartilhamento.'
+    );
     return;
   }
 
