@@ -242,6 +242,7 @@
                         <i id="audioStatusIcon" data-lucide="volume-2" class="w-3.5 h-3.5 text-emerald-400"></i>
                         <span id="audioStatusText">Áudio Ativo</span>
                     </div>
+
                 </div>
 
                 <!-- Viewer Count Badge Overlay (Top Right of Video) -->
@@ -459,9 +460,10 @@
                     <div>
                         <label class="block text-xs font-medium text-gray-400 mb-1">Bitrate Máximo (Banda):</label>
                         <select id="selectBitrate" onchange="onManualSettingChange()" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-brand-500">
-                            <option value="6000000" selected>6 Mbps (Padrão Balanced)</option>
+                            <option value="3500000" selected>3.5 Mbps (Padrão Estável - Default)</option>
                             <option value="10000000">10 Mbps (Modo Filme High Quality)</option>
                             <option value="8000000">8 Mbps (Modo Jogo High Bitrate)</option>
+                            <option value="6000000">6 Mbps (Alto)</option>
                             <option value="3000000">3 Mbps (Intermediário)</option>
                             <option value="1500000">1.5 Mbps (Econômico)</option>
                             <option value="0">Automático (Sem Limite)</option>
@@ -491,62 +493,6 @@
         </div>
     </div>
 
-    <!-- ELECTRON NATIVE SCREEN / WINDOW PICKER MODAL -->
-    <div id="electronSourceModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md hidden flex items-center justify-center p-4">
-        <div class="glass-panel w-full max-w-3xl max-h-[85vh] rounded-2xl p-6 border border-gray-800 shadow-2xl relative flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-200">
-            <div class="flex items-center justify-between border-b border-gray-800 pb-3">
-                <div class="flex items-center gap-3">
-                    <div class="w-9 h-9 rounded-xl bg-brand-500/10 border border-brand-500/20 flex items-center justify-center text-brand-400">
-                        <i data-lucide="monitor" class="w-5 h-5"></i>
-                    </div>
-                    <div>
-                        <h3 class="text-base font-bold text-gray-100">Escolha o que deseja compartilhar</h3>
-                        <p class="text-xs text-gray-400">Selecione uma tela inteira ou janela de aplicativo (jogos, filmes, etc.)</p>
-                    </div>
-                </div>
-                <button id="btnCloseSourceModal" class="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-gray-800 transition-colors">
-                    <i data-lucide="x" class="w-5 h-5"></i>
-                </button>
-            </div>
-
-            <!-- Status do Discord Detector e Controle de Áudio -->
-            <div id="discordDetectionBar" class="p-3 rounded-xl bg-gray-900 border border-gray-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
-                <div class="flex items-center gap-2">
-                    <span id="discordStatusDot" class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                    <span id="discordStatusMsg" class="text-gray-200 font-medium">Discord detectado</span>
-                </div>
-                <div class="flex items-center gap-2 w-full sm:w-auto">
-                    <span class="text-gray-400 font-medium">Transmitir Áudio de:</span>
-                    <select id="selectAudioSourceApp" class="bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-brand-500">
-                        <option value="system_clean" selected>🔊 Sistema Limpo (Sem Discord)</option>
-                        <option value="all">🔊 Todo o Som do PC (Padrão)</option>
-                    </select>
-                </div>
-            </div>
-
-            <!-- Dica Explicativa de Áudio Isolado -->
-            <div class="px-3 py-2 rounded-xl bg-brand-500/10 border border-brand-500/20 text-brand-300 text-xs flex items-center gap-2">
-                <i data-lucide="shield-check" class="w-4 h-4 text-brand-400 flex-shrink-0"></i>
-                <span>Ao escolher <b>Tela Inteira</b>, o vídeo será a sua tela completa e o áudio será filtrado para eliminar o som do Discord.</span>
-            </div>
-
-            <!-- Grid de telas e janelas -->
-            <div id="sourcesGrid" class="grid grid-cols-2 sm:grid-cols-3 gap-3 overflow-y-auto max-h-[50vh] p-1">
-                <!-- Preenchido dinamicamente via JS -->
-            </div>
-
-            <div class="flex items-center justify-between border-t border-gray-800 pt-3">
-                <span class="text-xs text-emerald-400 flex items-center gap-1.5">
-                    <i data-lucide="volume-2" class="w-4 h-4"></i>
-                    Filtro Anti-Eco de Voz Ativo
-                </span>
-                <button id="btnCancelSourceModal" class="px-4 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-medium transition-colors">
-                    Cancelar
-                </button>
-            </div>
-        </div>
-    </div>
-
     <!-- FOOTER -->
     <footer class="w-full border-t border-gray-800/60 py-4 text-center text-xs text-gray-500 glass-panel mt-auto">
         <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
@@ -560,6 +506,16 @@
             </div>
         </div>
     </footer>
+
+    <!-- Pacote compartilhado (Host + Receptor) -->
+    <script src="js/shared/quality.js"></script>
+    <script src="js/shared/signaling.js"></script>
+    <script src="js/shared/utils.js"></script>
+
+    <!-- Pacote compartilhado (Host + Receptor) -->
+    <script src="js/shared/quality.js"></script>
+    <script src="js/shared/signaling.js"></script>
+    <script src="js/shared/utils.js"></script>
 
     <!-- Application Script Modules (Injected in correct dependency order) -->
     <script src="js/config.js"></script>

@@ -1,0 +1,49 @@
+{
+  "name": "@streamp2p/desktop",
+  "productName": "StreamP2P",
+  "version": "1.0.0",
+  "description": "StreamP2P Desktop - Host em Electron com captura de audio do sistema sem Discord (addon WASAPI nativo)",
+  "main": "main.js",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "@streamp2p/native-audio": "*"
+  },
+  "devDependencies": {
+    "electron": "^44.5.0"
+  },
+  "build": {
+    "appId": "com.streamp2p.desktop",
+    "productName": "StreamP2P",
+    "directories": {
+      "output": "../../dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "css/**/*",
+      "js/**/*",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "dependencies": {}
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "asarUnpack": [
+      "**/node_modules/@streamp2p/native-audio/build/**/*.node"
+    ]
+  }
+}

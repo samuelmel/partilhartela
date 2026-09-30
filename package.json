@@ -1,44 +1,34 @@
 {
-  "name": "streamp2p-desktop",
+  "name": "streamp2p",
   "version": "1.0.0",
-  "description": "Aplicativo Desktop de Compartilhamento de Tela P2P em Alta Definição",
-  "main": "main.js",
-  "scripts": {
-    "start": "electron .",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder --win"
-  },
-  "keywords": [
-    "webrtc",
-    "screenshare",
-    "p2p",
-    "electron"
-  ],
-  "author": "",
+  "description": "StreamP2P - Compartilhamento de tela P2P em HD (Electron + Web + addon nativo WASAPI)",
+  "private": true,
   "license": "MIT",
+  "author": "",
+  "workspaces": [
+    "apps/desktop",
+    "apps/web",
+    "packages/shared",
+    "packages/native-audio"
+  ],
+  "scripts": {
+    "start": "npm run start --workspace @streamp2p/desktop",
+    "start:web": "npm run start --workspace @streamp2p/web",
+    "sync:shared": "node scripts/sync-shared.js",
+    "build:web": "node scripts/build-web-html.js",
+    "prebuild": "npm run sync:shared && npm run build:web",
+    "build:native": "npm run build --workspace @streamp2p/native-audio",
+    "rebuild:native": "npm run rebuild:electron --workspace @streamp2p/native-audio",
+    "postinstall": "npm run sync:shared && npm run build:web",
+    "pack": "npm run prebuild && electron-builder --dir --projectDir apps/desktop",
+    "dist": "npm run prebuild && electron-builder --win --projectDir apps/desktop",
+    "check": "node scripts/check-syntax.js"
+  },
   "devDependencies": {
     "electron": "^44.5.0",
     "electron-builder": "^26.15.3"
   },
-  "build": {
-    "appId": "com.streamp2p.desktop",
-    "productName": "StreamP2P",
-    "win": {
-      "target": [
-        "nsis",
-        "portable"
-      ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    },
-    "files": [
-      "main.js",
-      "preload.js",
-      "index.html",
-      "css/**/*",
-      "js/**/*"
-    ]
+  "engines": {
+    "node": ">=18"
   }
 }

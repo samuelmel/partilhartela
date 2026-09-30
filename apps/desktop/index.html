@@ -242,6 +242,12 @@
                         <i id="audioStatusIcon" data-lucide="volume-2" class="w-3.5 h-3.5 text-emerald-400"></i>
                         <span id="audioStatusText">Áudio Ativo</span>
                     </div>
+
+                    <!-- Filtro de áudio nativo (exclusão de processo) -->
+                    <div id="audioFilterBadge" class="hidden px-2.5 py-1 rounded-lg bg-emerald-500/10 backdrop-blur-md text-emerald-300 text-xs font-mono border border-emerald-500/30 flex items-center gap-1.5" title="Captura de áudio do sistema via WASAPI com exclusão de processo: todo o áudio do PC exceto o Discord">
+                        <i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-400"></i>
+                        <span id="audioFilterText">Áudio do sistema</span>
+                    </div>
                 </div>
 
                 <!-- Viewer Count Badge Overlay (Top Right of Video) -->
@@ -459,9 +465,10 @@
                     <div>
                         <label class="block text-xs font-medium text-gray-400 mb-1">Bitrate Máximo (Banda):</label>
                         <select id="selectBitrate" onchange="onManualSettingChange()" class="w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-brand-500">
-                            <option value="6000000" selected>6 Mbps (Padrão Balanced)</option>
+                            <option value="3500000" selected>3.5 Mbps (Padrão Estável - Default)</option>
                             <option value="10000000">10 Mbps (Modo Filme High Quality)</option>
                             <option value="8000000">8 Mbps (Modo Jogo High Bitrate)</option>
+                            <option value="6000000">6 Mbps (Alto)</option>
                             <option value="3000000">3 Mbps (Intermediário)</option>
                             <option value="1500000">1.5 Mbps (Econômico)</option>
                             <option value="0">Automático (Sem Limite)</option>
@@ -561,9 +568,15 @@
         </div>
     </footer>
 
+    <!-- Pacote compartilhado (Host + Receptor) -->
+    <script src="js/shared/quality.js"></script>
+    <script src="js/shared/signaling.js"></script>
+    <script src="js/shared/utils.js"></script>
+
     <!-- Application Script Modules (Injected in correct dependency order) -->
     <script src="js/config.js"></script>
     <script src="js/ui.js"></script>
+    <script src="js/audio-native.js"></script>
     <script src="js/webrtc.js"></script>
     <script src="js/app.js"></script>
 </body>

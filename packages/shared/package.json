@@ -1,0 +1,10 @@
+{
+  "name": "@streamp2p/shared",
+  "version": "1.0.0",
+  "description": "Configuracao de qualidade, sinalizacao P2P e utilitarios compartilhados entre Host e Receptor",
+  "main": "src/index.js",
+  "private": true,
+  "files": [
+    "src"
+  ]
+}

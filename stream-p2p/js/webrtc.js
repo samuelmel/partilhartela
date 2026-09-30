@@ -14,7 +14,10 @@ function setupPeerJS(targetRoomId) {
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' }
+                { urls: 'stun:stun2.l.google.com:19302' },
+                { urls: 'stun:stun3.l.google.com:19302' },
+                { urls: 'stun:stun4.l.google.com:19302' },
+                { urls: 'stun:global.stun.twilio.com:3478' }
             ]
         }
     });
@@ -78,7 +81,10 @@ function setupAsViewer(targetRoomId, hostPeerId) {
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' }
+                { urls: 'stun:stun2.l.google.com:19302' },
+                { urls: 'stun:stun3.l.google.com:19302' },
+                { urls: 'stun:stun4.l.google.com:19302' },
+                { urls: 'stun:global.stun.twilio.com:3478' }
             ]
         }
     });
@@ -145,31 +151,49 @@ async function toggleScreenSharing() {
     }
 
     try {
-        const displayMediaOptions = {
-            video: {
-                displaySurface: "monitor",
-                width: { ideal: qualityConfig.width, max: qualityConfig.width },
-                height: { ideal: qualityConfig.height, max: qualityConfig.height },
-                frameRate: { ideal: qualityConfig.fps, max: qualityConfig.fps }
-            },
-            audio: {
-                echoCancellation: false,
-                noiseSuppression: false,
-                autoGainControl: false,
-                suppressLocalAudioPlayback: false
-            }
-        };
-
         updateStatus('connecting', 'Aguardando seleção de tela...');
 
-        try {
-            localStream = await navigator.mediaDevices.getDisplayMedia(displayMediaOptions);
-        } catch (fallbackErr) {
-            console.warn('Constraints específicas rejeitadas, tentando modo padrão...', fallbackErr);
-            localStream = await navigator.mediaDevices.getDisplayMedia({
-                video: true,
-                audio: true
-            });
+        // Se estiver rodando dentro do aplicativo Electron, usa a API nativa
+        if (window.electronAPI && window.electronAPI.isElectron) {
+            localStream = await captureElectronScreen();
+            if (!localStream) {
+                updateStatus('waiting', 'Captura cancelada');
+                return;
+            }
+        } else {
+            // Modo Web/Navegador tradicional - sem displaySurface "monitor" para evitar congelamento
+            try {
+                localStream = await Promise.race([
+                    navigator.mediaDevices.getDisplayMedia({
+                        video: {
+                            width: { ideal: qualityConfig.width, max: qualityConfig.width },
+                            height: { ideal: qualityConfig.height, max: qualityConfig.height },
+                            frameRate: { ideal: qualityConfig.fps, max: qualityConfig.fps }
+                        },
+                        audio: {
+                            echoCancellation: false,
+                            noiseSuppression: false,
+                            autoGainControl: false,
+                            suppressLocalAudioPlayback: false
+                        }
+                    }),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout capturing screen')), 15000))
+                ]);
+            } catch (fallbackErr) {
+                console.warn('Erro ao capturar tela no modo navegador, tentando fallback:', fallbackErr);
+                try {
+                    localStream = await navigator.mediaDevices.getDisplayMedia({
+                        video: true,
+                        audio: true
+                    });
+                } catch (fallback2Err) {
+                    console.error('Falha completa na captura de tela:', fallback2Err);
+                    showToast('Não foi possível capturar tela. Tente usar o aplicativo Desktop.');
+                    isSharing = false;
+                    updateStatus('waiting', 'Erro na Captura');
+                    return;
+                }
+            }
         }
 
         isSharing = true;
@@ -190,7 +214,7 @@ async function toggleScreenSharing() {
         elements.liveOverlay.classList.remove('hidden');
         elements.liveOverlay.classList.add('flex');
 
-        const settings = videoTrack.getSettings();
+        const settings = videoTrack ? videoTrack.getSettings() : {};
         const actualWidth = settings.width || qualityConfig.width;
         const actualHeight = settings.height || qualityConfig.height;
         const actualFps = settings.frameRate || qualityConfig.fps;
@@ -231,6 +255,8 @@ async function toggleScreenSharing() {
 
         setTimeout(() => {
             applyDynamicWebRTCBitrate(qualityConfig.bitrateBps);
+            // Inicia o monitor adaptativo de rede após a conexão estabilizar
+            setTimeout(() => startAdaptiveBitrateMonitor(), 3000);
         }, 600);
 
         refreshIcons();
@@ -278,6 +304,7 @@ function stopScreenSharing() {
     elements.btnToggleShare.classList.replace('hover:bg-red-500', 'hover:bg-brand-500');
 
     updateStatus('waiting', 'Sala Pronta (Aguardando)');
+    stopAdaptiveBitrateMonitor();
     showToast('Transmissão de tela encerrada.');
     refreshIcons();
 }
@@ -338,7 +365,7 @@ async function toggleMicrophoneCapture() {
 
     if (isMicActive) {
         if (micStream) {
-            micStream.getTracks().forEach(track => track.stop());
+            micStream.getTracks().forEach(t => t.stop());
             micStream = null;
         }
         isMicActive = false;
@@ -368,7 +395,7 @@ async function toggleMicrophoneCapture() {
     refreshIcons();
 }
 
-// Apply Dynamic Bitrate Tuning via RTCRtpSender.setParameters()
+// Apply Dynamic Bitrate Tuning via RTCRtpSender.setParameters() com degradação adaptativa
 function applyDynamicWebRTCBitrate(bitrateBps) {
     if (!peer) return;
 
@@ -387,12 +414,76 @@ function applyDynamicWebRTCBitrate(bitrateBps) {
                         } else {
                             delete params.encodings[0].maxBitrate;
                         }
+                        // Mantém FPS mesmo quando a rede piora — reduz qualidade mas NÃO trava
+                        params.encodings[0].degradationPreference = 'maintain-framerate';
                         sender.setParameters(params).catch(err => console.warn('Bitrate set err:', err));
                     }
                 });
             }
         });
     });
+}
+
+// Monitor adaptativo de qualidade de rede — ajusta bitrate automaticamente se houver perda de pacotes
+let _adaptiveMonitorInterval = null;
+function startAdaptiveBitrateMonitor() {
+    stopAdaptiveBitrateMonitor();
+    let consecutiveBadReports = 0;
+    let currentBitrate = qualityConfig.bitrateBps;
+
+    _adaptiveMonitorInterval = setInterval(async () => {
+        if (!peer || !isSharing) return;
+        let totalPacketsLost = 0;
+        let totalPacketsSent = 0;
+
+        try {
+            for (const connList of Object.values(peer.connections)) {
+                for (const conn of connList) {
+                    if (!conn.peerConnection) continue;
+                    const stats = await conn.peerConnection.getStats();
+                    stats.forEach(report => {
+                        if (report.type === 'outbound-rtp' && report.kind === 'video') {
+                            totalPacketsSent += report.packetsSent || 0;
+                        }
+                        if (report.type === 'remote-inbound-rtp' && report.kind === 'video') {
+                            totalPacketsLost += report.packetsLost || 0;
+                        }
+                    });
+                }
+            }
+        } catch (e) { return; }
+
+        const lossRate = totalPacketsSent > 0 ? (totalPacketsLost / totalPacketsSent) : 0;
+
+        if (lossRate > 0.05) {
+            // Rede ruim: reduz o bitrate em 25% para estabilizar
+            consecutiveBadReports++;
+            if (consecutiveBadReports >= 2) {
+                const reduced = Math.max(Math.floor(currentBitrate * 0.75), 600000);
+                if (reduced < currentBitrate) {
+                    currentBitrate = reduced;
+                    applyDynamicWebRTCBitrate(currentBitrate);
+                    console.warn(`[Adaptativo] Rede instável. Bitrate reduzido para ${Math.round(currentBitrate / 1000)} kbps`);
+                }
+                consecutiveBadReports = 0;
+            }
+        } else if (lossRate < 0.01 && currentBitrate < qualityConfig.bitrateBps) {
+            // Rede boa: recupera o bitrate gradualmente
+            consecutiveBadReports = 0;
+            const restored = Math.min(Math.floor(currentBitrate * 1.15), qualityConfig.bitrateBps);
+            if (restored > currentBitrate) {
+                currentBitrate = restored;
+                applyDynamicWebRTCBitrate(currentBitrate);
+            }
+        }
+    }, 4000); // Verifica a cada 4 segundos
+}
+
+function stopAdaptiveBitrateMonitor() {
+    if (_adaptiveMonitorInterval) {
+        clearInterval(_adaptiveMonitorInterval);
+        _adaptiveMonitorInterval = null;
+    }
 }
 
 // Apply Content Hint (motion vs detail)
@@ -403,3 +494,252 @@ function applyContentHint(hint) {
         videoTrack.contentHint = hint;
     }
 }
+
+// Envolve uma captura do Electron com timeout para a UI nunca travar indefinidamente
+function withTimeout(promise, ms, label, onLateResolve) {
+    let timedOut = false;
+    let timerId = null;
+
+    const guarded = promise.then(value => {
+        if (timedOut && onLateResolve) onLateResolve(value);
+        return value;
+    });
+
+    const guard = new Promise((_, reject) => {
+        timerId = setTimeout(() => {
+            timedOut = true;
+            reject(new Error(`Timeout ao capturar: ${label}`));
+        }, ms);
+    });
+
+    return Promise.race([guarded, guard]).finally(() => clearTimeout(timerId));
+}
+
+function stopAllTracks(stream) {
+    if (!stream) return;
+    stream.getTracks().forEach(t => t.stop());
+}
+
+// Captura o áudio de UMA janela específica.
+// O chromeMediaSourceId no áudio é o que garante que o Discord e o microfone fiquem de fora.
+async function captureWindowAudioOnly(sourceId, timeoutMs = 1500) {
+    const attempt = navigator.mediaDevices.getUserMedia({
+        audio: {
+            mandatory: {
+                chromeMediaSource: 'desktop',
+                chromeMediaSourceId: sourceId
+            }
+        },
+        video: false
+    });
+
+    const stream = await withTimeout(attempt, timeoutMs, 'áudio da janela', stopAllTracks);
+    const audioTrack = stream.getAudioTracks()[0];
+
+    if (!audioTrack) {
+        stopAllTracks(stream);
+        return null;
+    }
+
+    return audioTrack;
+}
+
+// Captura de tela nativa no Electron via desktopCapturer com isolamento de Discord
+function captureElectronScreen() {
+    return new Promise(async (resolve) => {
+        try {
+            // Verifica status do Discord em segundo plano
+            let discordRunning = false;
+            try {
+                const discordInfo = await window.electronAPI.checkDiscordStatus();
+                discordRunning = discordInfo && discordInfo.isRunning;
+                if (elements.discordStatusMsg) {
+                    if (discordRunning) {
+                        elements.discordStatusDot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+                        elements.discordStatusMsg.textContent = `Discord detectado (${discordInfo.count} processo(s) ativo(s)) - Filtro pronto`;
+                    } else {
+                        elements.discordStatusDot.className = 'w-2 h-2 rounded-full bg-gray-500';
+                        elements.discordStatusMsg.textContent = 'Discord não está aberto no momento';
+                    }
+                }
+            } catch (dErr) {
+                console.warn('Erro ao consultar Discord:', dErr);
+            }
+
+            const sources = await window.electronAPI.getDesktopSources();
+            if (!sources || sources.length === 0) {
+                showToast('Nenhuma tela ou janela encontrada.');
+                return resolve(null);
+            }
+
+            elements.sourcesGrid.innerHTML = '';
+
+            sources.forEach(src => {
+                const card = document.createElement('div');
+                card.className = 'glass-panel p-2.5 rounded-xl border border-gray-800 hover:border-brand-500 cursor-pointer flex flex-col gap-2 group transition-all hover:bg-gray-800/60 relative';
+                
+                // Badge se for tela inteira
+                const isScreen = src.isScreen;
+                const isDiscordApp = src.isDiscord;
+
+                card.innerHTML = `
+                    <div class="relative w-full aspect-video rounded-lg overflow-hidden bg-black/80 flex items-center justify-center">
+                        <img src="${src.thumbnail}" class="w-full h-full object-contain" alt="${src.name}" />
+                        ${isScreen ? '<span class="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-brand-500/90 text-white font-mono text-[9px] font-bold">TELA INTEIRA</span>' : ''}
+                        ${isDiscordApp ? '<span class="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded bg-discord-500 text-white font-mono text-[9px] font-bold">DISCORD</span>' : ''}
+                    </div>
+                    <div class="flex items-center gap-2">
+                        ${src.appIcon ? `<img src="${src.appIcon}" class="w-4 h-4 rounded flex-shrink-0" />` : ''}
+                        <span class="text-xs text-gray-200 font-medium truncate" title="${src.name}">${src.name}</span>
+                    </div>
+                `;
+
+                card.onclick = async () => {
+                    elements.electronSourceModal.classList.add('hidden');
+                    const audioMode = elements.selectAudioSourceApp ? elements.selectAudioSourceApp.value : 'system_clean';
+
+                    try {
+                        let finalStream = null;
+                        let screenVideoStream = null;
+
+                        // Se for TELA INTEIRA e o modo for "Sistema Limpo (Sem Discord)":
+                        if (isScreen && audioMode === 'system_clean') {
+                            updateStatus('connecting', 'Iniciando captura da tela...');
+
+                            // 1. Vídeo da tela cheia, SEM áudio de sistema (loopback)
+                            screenVideoStream = await withTimeout(
+                                navigator.mediaDevices.getUserMedia({
+                                    audio: false,
+                                    video: {
+                                        mandatory: {
+                                            chromeMediaSource: 'desktop',
+                                            chromeMediaSourceId: src.id,
+                                            maxWidth: qualityConfig.width,
+                                            maxHeight: qualityConfig.height,
+                                            maxFrameRate: qualityConfig.fps
+                                        }
+                                    }
+                                }),
+                                10000,
+                                'vídeo da tela',
+                                stopAllTracks
+                            );
+
+                            // 2. Áudio isolado: tenta janela por janela, pulando Discord e a própria janela
+                            updateStatus('connecting', 'Isolando áudio (sem Discord)...');
+
+                            const audioCandidates = sources
+                                .filter(s => !s.isScreen && !s.isDiscord)
+                                .filter(s => !/streamp2p/i.test(s.name))
+                                .slice(0, 8);
+
+                            let cleanAudioTrack = null;
+
+                            for (const appSrc of audioCandidates) {
+                                try {
+                                    const track = await captureWindowAudioOnly(appSrc.id, 1200);
+                                    if (track) {
+                                        cleanAudioTrack = track;
+                                        console.log(`Áudio isolado com sucesso do app: ${appSrc.name}`);
+                                        break;
+                                    }
+                                } catch (appErr) {
+                                    console.debug(`Sem áudio em: ${appSrc.name}`);
+                                }
+                            }
+
+                            // 3. Monta o stream: Vídeo de Tela Cheia + Áudio da janela (sem Discord)
+                            finalStream = new MediaStream();
+                            screenVideoStream.getVideoTracks().forEach(vt => finalStream.addTrack(vt));
+
+                            if (cleanAudioTrack) {
+                                finalStream.addTrack(cleanAudioTrack);
+                                showToast('Tela cheia ativa! Áudio isolado — Discord e microfone fora da transmissão.');
+                            } else {
+                                // Nunca usa loopback do sistema aqui: é ele que traz a voz do Discord
+                                showToast(discordRunning
+                                    ? 'Tela cheia SEM áudio: o Discord está aberto e foi preservado (nenhum vazamento de voz).'
+                                    : 'Tela cheia ativa, mas nenhum app estava tocando som.');
+                            }
+
+                            resolve(finalStream);
+                            return;
+                        }
+
+                        // Modo Padrão / Janela individual
+                        if (isDiscordApp) {
+                            showToast('Captura do Discord bloqueada para não transmitir a voz de ninguém.');
+                            resolve(null);
+                            return;
+                        }
+
+                        updateStatus('connecting', 'Iniciando captura da janela...');
+
+                        const stream = await withTimeout(
+                            navigator.mediaDevices.getUserMedia({
+                                audio: {
+                                    mandatory: {
+                                        chromeMediaSource: 'desktop',
+                                        chromeMediaSourceId: src.id
+                                    }
+                                },
+                                video: {
+                                    mandatory: {
+                                        chromeMediaSource: 'desktop',
+                                        chromeMediaSourceId: src.id,
+                                        maxWidth: qualityConfig.width,
+                                        maxHeight: qualityConfig.height,
+                                        maxFrameRate: qualityConfig.fps
+                                    }
+                                }
+                            }),
+                            10000,
+                            'janela selecionada',
+                            stopAllTracks
+                        );
+
+                        resolve(stream);
+                    } catch (err) {
+                        console.error('Erro ao capturar fonte do Electron:', err);
+                        stopAllTracks(screenVideoStream);
+                        try {
+                            const videoOnlyStream = await navigator.mediaDevices.getUserMedia({
+                                audio: false,
+                                video: {
+                                    mandatory: {
+                                        chromeMediaSource: 'desktop',
+                                        chromeMediaSourceId: src.id,
+                                        maxWidth: qualityConfig.width,
+                                        maxHeight: qualityConfig.height,
+                                        maxFrameRate: qualityConfig.fps
+                                    }
+                                }
+                            });
+                            resolve(videoOnlyStream);
+                        } catch (vErr) {
+                            showToast('Erro ao iniciar captura da janela selecionada.');
+                            resolve(null);
+                        }
+                    }
+                };
+
+                elements.sourcesGrid.appendChild(card);
+            });
+
+            elements.electronSourceModal.classList.remove('hidden');
+
+            const closeModal = () => {
+                elements.electronSourceModal.classList.add('hidden');
+                resolve(null);
+            };
+
+            elements.btnCloseSourceModal.onclick = closeModal;
+            elements.btnCancelSourceModal.onclick = closeModal;
+
+        } catch (err) {
+            console.error('Erro ao listar fontes no Electron:', err);
+            resolve(null);
+        }
+    });
+}
+

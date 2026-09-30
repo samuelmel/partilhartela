@@ -308,15 +308,27 @@ function applyQualitySettingsFromModal() {
 }
 
 // Real-Time Web Audio Visualizer Meter
+let _audioMeterSource = null;
+
 function setupAudioMeter(stream) {
     try {
         if (!audioContext) {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
         }
-        const source = audioContext.createMediaStreamSource(stream);
+        if (audioContext.state === 'suspended') {
+            audioContext.resume().catch(() => {});
+        }
+
+        // Evita acumular nós de áudio a cada reconexão (causava travamento)
+        if (_audioMeterSource) {
+            try { _audioMeterSource.disconnect(); } catch (e) {}
+            _audioMeterSource = null;
+        }
+
+        _audioMeterSource = audioContext.createMediaStreamSource(stream);
         audioAnalyser = audioContext.createAnalyser();
         audioAnalyser.fftSize = 64;
-        source.connect(audioAnalyser);
+        _audioMeterSource.connect(audioAnalyser);
 
         elements.audioMeterContainer.classList.remove('hidden');
         elements.audioMeterContainer.classList.add('flex');

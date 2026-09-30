@@ -105,7 +105,12 @@ ipcMain.handle('get-desktop-sources', async () => {
 app.whenReady().then(() => {
   session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
     desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
-      callback({ video: sources[0], audio: 'loopback' });
+      // Só anexa loopback (áudio do sistema inteiro) se o renderer realmente pediu.
+      // O renderer faz o áudio por janela, então o loopback nunca entra por aqui.
+      callback({
+        video: sources[0],
+        audio: request.audioRequested ? 'loopback' : undefined
+      });
     });
   });
 

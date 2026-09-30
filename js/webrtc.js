@@ -195,13 +195,8 @@ async function toggleScreenSharing() {
                 }
             }
         }
-    } catch (err) {
-        console.error('Erro inesperado ao capturar tela:', err);
-        isSharing = false;
-        updateStatus('waiting', 'Erro na Captura');
-        showToast('Falha ao iniciar captura de tela.');
-        return;
-    }
+
+        isSharing = true;
 
         const videoTrack = localStream.getVideoTracks()[0];
         if (videoTrack) {
@@ -219,7 +214,7 @@ async function toggleScreenSharing() {
         elements.liveOverlay.classList.remove('hidden');
         elements.liveOverlay.classList.add('flex');
 
-        const settings = videoTrack.getSettings();
+        const settings = videoTrack ? videoTrack.getSettings() : {};
         const actualWidth = settings.width || qualityConfig.width;
         const actualHeight = settings.height || qualityConfig.height;
         const actualFps = settings.frameRate || qualityConfig.fps;
@@ -500,6 +495,55 @@ function applyContentHint(hint) {
     }
 }
 
+// Envolve uma captura do Electron com timeout para a UI nunca travar indefinidamente
+function withTimeout(promise, ms, label, onLateResolve) {
+    let timedOut = false;
+    let timerId = null;
+
+    const guarded = promise.then(value => {
+        if (timedOut && onLateResolve) onLateResolve(value);
+        return value;
+    });
+
+    const guard = new Promise((_, reject) => {
+        timerId = setTimeout(() => {
+            timedOut = true;
+            reject(new Error(`Timeout ao capturar: ${label}`));
+        }, ms);
+    });
+
+    return Promise.race([guarded, guard]).finally(() => clearTimeout(timerId));
+}
+
+function stopAllTracks(stream) {
+    if (!stream) return;
+    stream.getTracks().forEach(t => t.stop());
+}
+
+// Captura o áudio de UMA janela específica.
+// O chromeMediaSourceId no áudio é o que garante que o Discord e o microfone fiquem de fora.
+async function captureWindowAudioOnly(sourceId, timeoutMs = 1500) {
+    const attempt = navigator.mediaDevices.getUserMedia({
+        audio: {
+            mandatory: {
+                chromeMediaSource: 'desktop',
+                chromeMediaSourceId: sourceId
+            }
+        },
+        video: false
+    });
+
+    const stream = await withTimeout(attempt, timeoutMs, 'áudio da janela', stopAllTracks);
+    const audioTrack = stream.getAudioTracks()[0];
+
+    if (!audioTrack) {
+        stopAllTracks(stream);
+        return null;
+    }
+
+    return audioTrack;
+}
+
 // Captura de tela nativa no Electron via desktopCapturer com isolamento de Discord
 function captureElectronScreen() {
     return new Promise(async (resolve) => {
@@ -556,12 +600,89 @@ function captureElectronScreen() {
 
                     try {
                         let finalStream = null;
+                        let screenVideoStream = null;
 
                         // Se for TELA INTEIRA e o modo for "Sistema Limpo (Sem Discord)":
                         if (isScreen && audioMode === 'system_clean') {
-                            // 1. Captura o vídeo em tela cheia na qualidade máxima
-                            const screenVideoStream = await navigator.mediaDevices.getUserMedia({
-                                audio: false,
+                            updateStatus('connecting', 'Iniciando captura da tela...');
+
+                            // 1. Vídeo da tela cheia, SEM áudio de sistema (loopback)
+                            screenVideoStream = await withTimeout(
+                                navigator.mediaDevices.getUserMedia({
+                                    audio: false,
+                                    video: {
+                                        mandatory: {
+                                            chromeMediaSource: 'desktop',
+                                            chromeMediaSourceId: src.id,
+                                            maxWidth: qualityConfig.width,
+                                            maxHeight: qualityConfig.height,
+                                            maxFrameRate: qualityConfig.fps
+                                        }
+                                    }
+                                }),
+                                10000,
+                                'vídeo da tela',
+                                stopAllTracks
+                            );
+
+                            // 2. Áudio isolado: tenta janela por janela, pulando Discord e a própria janela
+                            updateStatus('connecting', 'Isolando áudio (sem Discord)...');
+
+                            const audioCandidates = sources
+                                .filter(s => !s.isScreen && !s.isDiscord)
+                                .filter(s => !/streamp2p/i.test(s.name))
+                                .slice(0, 8);
+
+                            let cleanAudioTrack = null;
+
+                            for (const appSrc of audioCandidates) {
+                                try {
+                                    const track = await captureWindowAudioOnly(appSrc.id, 1200);
+                                    if (track) {
+                                        cleanAudioTrack = track;
+                                        console.log(`Áudio isolado com sucesso do app: ${appSrc.name}`);
+                                        break;
+                                    }
+                                } catch (appErr) {
+                                    console.debug(`Sem áudio em: ${appSrc.name}`);
+                                }
+                            }
+
+                            // 3. Monta o stream: Vídeo de Tela Cheia + Áudio da janela (sem Discord)
+                            finalStream = new MediaStream();
+                            screenVideoStream.getVideoTracks().forEach(vt => finalStream.addTrack(vt));
+
+                            if (cleanAudioTrack) {
+                                finalStream.addTrack(cleanAudioTrack);
+                                showToast('Tela cheia ativa! Áudio isolado — Discord e microfone fora da transmissão.');
+                            } else {
+                                // Nunca usa loopback do sistema aqui: é ele que traz a voz do Discord
+                                showToast(discordRunning
+                                    ? 'Tela cheia SEM áudio: o Discord está aberto e foi preservado (nenhum vazamento de voz).'
+                                    : 'Tela cheia ativa, mas nenhum app estava tocando som.');
+                            }
+
+                            resolve(finalStream);
+                            return;
+                        }
+
+                        // Modo Padrão / Janela individual
+                        if (isDiscordApp) {
+                            showToast('Captura do Discord bloqueada para não transmitir a voz de ninguém.');
+                            resolve(null);
+                            return;
+                        }
+
+                        updateStatus('connecting', 'Iniciando captura da janela...');
+
+                        const stream = await withTimeout(
+                            navigator.mediaDevices.getUserMedia({
+                                audio: {
+                                    mandatory: {
+                                        chromeMediaSource: 'desktop',
+                                        chromeMediaSourceId: src.id
+                                    }
+                                },
                                 video: {
                                     mandatory: {
                                         chromeMediaSource: 'desktop',
@@ -571,92 +692,16 @@ function captureElectronScreen() {
                                         maxFrameRate: qualityConfig.fps
                                     }
                                 }
-                            });
-
-                            // 2. Busca uma janela com som ativo (Jogo, Spotify, Navegador, etc.) excluindo o Discord
-                            const nonDiscordSources = sources.filter(s => !s.isScreen && !s.isDiscord);
-                            let cleanAudioTrack = null;
-
-                            for (const appSrc of nonDiscordSources) {
-                                try {
-                                    const appStream = await navigator.mediaDevices.getUserMedia({
-                                        video: {
-                                            mandatory: {
-                                                chromeMediaSource: 'desktop',
-                                                chromeMediaSourceId: appSrc.id,
-                                                maxWidth: 320,
-                                                maxHeight: 180,
-                                                maxFrameRate: 5
-                                            }
-                                        },
-                                        audio: {
-                                            mandatory: {
-                                                chromeMediaSource: 'desktop'
-                                            }
-                                        }
-                                    });
-
-                                    const aTrack = appStream.getAudioTracks()[0];
-                                    if (aTrack) {
-                                        cleanAudioTrack = aTrack;
-                                        // Interrompe o vídeo temporário do app
-                                        appStream.getVideoTracks().forEach(t => t.stop());
-                                        console.log(`Áudio isolado com sucesso do app: ${appSrc.name}`);
-                                        break;
-                                    } else {
-                                        appStream.getTracks().forEach(t => t.stop());
-                                    }
-                                } catch (appErr) {
-                                    // Continua procurando
-                                }
-                            }
-
-                            // 3. Monta o stream perfeito: Vídeo de Tela Cheia + Áudio Isolado
-                            finalStream = new MediaStream();
-                            screenVideoStream.getVideoTracks().forEach(vt => finalStream.addTrack(vt));
-
-                            if (cleanAudioTrack) {
-                                finalStream.addTrack(cleanAudioTrack);
-                                showToast('Tela Cheia ativa! O áudio foi isolado e o Discord está 100% mutado.');
-                            } else {
-                                // Fallback para áudio do sistema caso nenhum app esteja tocando
-                                try {
-                                    const fallbackStream = await navigator.mediaDevices.getUserMedia({
-                                        audio: { mandatory: { chromeMediaSource: 'desktop' } },
-                                        video: false
-                                    });
-                                    fallbackStream.getAudioTracks().forEach(at => finalStream.addTrack(at));
-                                    showToast('Tela Cheia ativa com áudio do sistema.');
-                                } catch (e) {
-                                    showToast('Tela Cheia ativa (sem áudio adicional detectado).');
-                                }
-                            }
-
-                            resolve(finalStream);
-                            return;
-                        }
-
-                        // Modo Padrão / Janela individual
-                        const stream = await navigator.mediaDevices.getUserMedia({
-                            audio: {
-                                mandatory: {
-                                    chromeMediaSource: 'desktop'
-                                }
-                            },
-                            video: {
-                                mandatory: {
-                                    chromeMediaSource: 'desktop',
-                                    chromeMediaSourceId: src.id,
-                                    maxWidth: qualityConfig.width,
-                                    maxHeight: qualityConfig.height,
-                                    maxFrameRate: qualityConfig.fps
-                                }
-                            }
-                        });
+                            }),
+                            10000,
+                            'janela selecionada',
+                            stopAllTracks
+                        );
 
                         resolve(stream);
                     } catch (err) {
                         console.error('Erro ao capturar fonte do Electron:', err);
+                        stopAllTracks(screenVideoStream);
                         try {
                             const videoOnlyStream = await navigator.mediaDevices.getUserMedia({
                                 audio: false,

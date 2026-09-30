@@ -1,0 +1,11 @@
+{
+  "name": "@streamp2p/web",
+  "version": "1.0.0",
+  "description": "StreamP2P Web - cliente HTML/JS leve para o receptor/espectador, sem dependencias nativas",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "start": "node ../../scripts/serve.js",
+    "deploy:check": "node -e \"console.log('Deploy: publique a pasta apps/web no Render como Static Site')\""
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "@streamp2p/native-audio",
+  "version": "1.0.0",
+  "description": "Addon N-API (C++/WASAPI) para capturar audio do sistema excluindo processos (Discord)",
+  "main": "index.js",
+  "private": true,
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "build:debug": "node-gyp rebuild --debug",
+    "rebuild:electron": "electron-rebuild -f -w streamp2p_audio",
+    "clean": "node-gyp clean"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.3.0"
+  },
+  "devDependencies": {
+    "electron-rebuild": "^3.2.9"
+  },
+  "gypfile": true
+}
