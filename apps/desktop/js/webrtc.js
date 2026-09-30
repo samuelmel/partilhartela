@@ -169,44 +169,76 @@ async function probeNativeAudio() {
  *
  * @returns {Promise<{track:?MediaStreamTrack, mode:string, error:?string}>}
  */
-async function buildAudioTrack() {
-  if (audioStrategy.mode !== 'native' || !isElectron) {
-    return { track: null, mode: 'none', error: null };
-  }
+async function buildAudioTrack(audioMode) {
+  const Utils = window.StreamP2P ? window.StreamP2P.Utils : null;
+  const stopAllTracks = Utils
+    ? Utils.stopAllTracks
+    : (s) => s && s.getTracks && s.getTracks().forEach((t) => t.stop());
 
-  const pidInfo = await window.electronAPI.getExcludedPids();
-  const pids = pidInfo && Array.isArray(pidInfo.pids) ? pidInfo.pids : [];
-  audioStrategy.excludedPids = pids;
+  // Estrategia 1: addon nativo (audio do sistema SEM os PIDs excluidos).
+  const wantsNative = audioMode !== 'system' && isElectron;
 
-  if (elements.discordStatusDot) {
-    if (pidInfo && pidInfo.isRunning) {
-      elements.discordStatusDot.className =
-        'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse';
-      elements.discordStatusMsg.textContent =
-        'Discord detectado (' + pidInfo.count + ' processo(s)) - audio sera EXCLUIDO';
-    } else {
-      elements.discordStatusDot.className = 'w-2.5 h-2.5 rounded-full bg-gray-500';
-      elements.discordStatusMsg.textContent = 'Discord nao esta aberto no momento';
+  if (wantsNative) {
+    try {
+      const pidInfo = await window.electronAPI.getExcludedPids();
+      const pids = pidInfo && Array.isArray(pidInfo.pids) ? pidInfo.pids : [];
+      audioStrategy.excludedPids = pids;
+
+      if (elements.discordStatusDot) {
+        if (pidInfo && pidInfo.isRunning) {
+          elements.discordStatusDot.className =
+            'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse';
+          elements.discordStatusMsg.textContent =
+            'Discord detectado (' + pidInfo.count + ' processo(s)) - audio sera EXCLUIDO';
+        } else {
+          elements.discordStatusDot.className =
+            'w-2.5 h-2.5 rounded-full bg-gray-500';
+          elements.discordStatusMsg.textContent = 'Discord nao esta aberto no momento';
+        }
+      }
+
+      const result = await window.NativeAudioBridge.start({ excludedPids: pids });
+
+      if (result.ok) {
+        updateAudioFilterBadge(pids, true, null);
+        return {
+          track: result.track,
+          mode: 'native',
+          error: null,
+          excludedPids: pids
+        };
+      }
+
+      audioStrategy.lastError = result.error;
+      console.warn('[audio] addon nativo indisponivel:', result.error);
+      updateAudioFilterBadge([], false, result.error);
+    } catch (err) {
+      audioStrategy.lastError = err.message;
+      console.warn('[audio] falha ao iniciar addon nativo:', err);
+      updateAudioFilterBadge([], false, err.message);
     }
   }
 
-  updateAudioFilterBadge(pids, true, null);
+  // Estrategia 2 (fallback): loopback do endpoint de saida padrao.
+  // Este e o caminho historico do app: captura o audio do sistema pelo
+  // dispositivo de saida. Em testes anteriores nao capturava o Discord.
+  try {
+    const audioOnly = await navigator.mediaDevices.getUserMedia({
+      audio: { mandatory: { chromeMediaSource: 'desktop' } },
+      video: false
+    });
 
-  const result = await window.NativeAudioBridge.start({ excludedPids: pids });
-
-  if (!result.ok) {
-    audioStrategy.lastError = result.error;
-    console.warn('[audio] addon nativo recusou:', result.error);
-    updateAudioFilterBadge([], false, result.error);
-    return { track: null, mode: 'fallback', error: result.error };
+    const track = audioOnly.getAudioTracks()[0];
+    if (track) {
+      return { track: track, mode: 'loopback', error: null };
+    }
+    stopAllTracks(audioOnly);
+  } catch (err) {
+    console.warn('[audio] loopback do sistema falhou:', err);
+    audioStrategy.lastError = err.message;
   }
 
-  return {
-    track: result.track,
-    mode: 'native',
-    error: null,
-    excludedPids: pids
-  };
+  return { track: null, mode: 'none', error: audioStrategy.lastError };
 }
 
 /**
@@ -426,9 +458,12 @@ function captureElectronScreen(utils) {
               stopAllTracks
             );
 
-            // 2. Audio do sistema SEM Discord (via addon nativo)
-            updateStatus('connecting', 'Preparando audio sem Discord...');
-            const audioResult = await buildAudioTrack();
+            // 2. Audio do sistema (nativo com exclusao, ou loopback como fallback)
+            updateStatus('connecting', 'Preparando audio...');
+            const audioMode = elements.selectAudioSourceApp
+              ? elements.selectAudioSourceApp.value
+              : 'native';
+            const audioResult = await buildAudioTrack(audioMode);
 
             const finalStream = new MediaStream();
             screenVideoStream.getVideoTracks().forEach((vt) => finalStream.addTrack(vt));
@@ -437,17 +472,14 @@ function captureElectronScreen(utils) {
               finalStream.addTrack(audioResult.track);
               showToast(
                 audioResult.mode === 'native'
-                  ? 'Audio do sistema capturado com o Discord EXCLUIDO (' +
+                  ? 'Audio capturado com o Discord EXCLUIDO (' +
                     (audioResult.excludedPids || []).length + ' PID).'
-                  : 'Audio capturado.'
+                  : 'Audio do sistema capturado.'
               );
-            } else if (isScreen) {
-              // Tela cheia sem audio nativo: o loopback traria o Discord, entao
-              // NAO usamos loopback aqui. Preferimos silencio a vazar voz.
+            } else {
               showToast(
-                'Video sem audio: o addon nativo nao esta disponivel e o ' +
-                'audio do sistema incluiria o Discord. Compila com ' +
-                '"npm run build:native" ou use o modo janela.'
+                'Video sem audio: o sistema nao liberou captura de audio. ' +
+                'Verifique as permissoes de som do Windows.'
               );
             }
 

@@ -525,8 +525,8 @@
                 <div class="flex items-center gap-2 w-full sm:w-auto">
                     <span class="text-gray-400 font-medium">Transmitir Áudio de:</span>
                     <select id="selectAudioSourceApp" class="bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-brand-500">
-                        <option value="system_clean" selected>🔊 Sistema Limpo (Sem Discord)</option>
-                        <option value="all">🔊 Todo o Som do PC (Padrão)</option>
+                        <option value="native" selected>🛡️ Isolar Discord (addon nativo)</option>
+                        <option value="system">🔊 Áudio do Sistema (padrão)</option>
                     </select>
                 </div>
             </div>
@@ -534,7 +534,7 @@
             <!-- Dica Explicativa de Áudio Isolado -->
             <div class="px-3 py-2 rounded-xl bg-brand-500/10 border border-brand-500/20 text-brand-300 text-xs flex items-center gap-2">
                 <i data-lucide="shield-check" class="w-4 h-4 text-brand-400 flex-shrink-0"></i>
-                <span>Ao escolher <b>Tela Inteira</b>, o vídeo será a sua tela completa e o áudio será filtrado para eliminar o som do Discord.</span>
+                <span>Escolha <b>"Isolar Discord"</b> para usar o addon nativo (exclui o Discord por PID). Sem o addon compilado, o app usa o áudio do sistema.</span>
             </div>
 
             <!-- Grid de telas e janelas -->
