@@ -420,10 +420,28 @@ function applyContentHint(hint) {
     }
 }
 
-// Captura de tela nativa no Electron via desktopCapturer
+// Captura de tela nativa no Electron via desktopCapturer com isolamento de Discord
 function captureElectronScreen() {
     return new Promise(async (resolve) => {
         try {
+            // Verifica status do Discord em segundo plano
+            let discordRunning = false;
+            try {
+                const discordInfo = await window.electronAPI.checkDiscordStatus();
+                discordRunning = discordInfo && discordInfo.isRunning;
+                if (elements.discordStatusMsg) {
+                    if (discordRunning) {
+                        elements.discordStatusDot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+                        elements.discordStatusMsg.textContent = `Discord detectado (${discordInfo.count} processo(s) ativo(s)) - Filtro pronto`;
+                    } else {
+                        elements.discordStatusDot.className = 'w-2 h-2 rounded-full bg-gray-500';
+                        elements.discordStatusMsg.textContent = 'Discord não está aberto no momento';
+                    }
+                }
+            } catch (dErr) {
+                console.warn('Erro ao consultar Discord:', dErr);
+            }
+
             const sources = await window.electronAPI.getDesktopSources();
             if (!sources || sources.length === 0) {
                 showToast('Nenhuma tela ou janela encontrada.');
@@ -434,19 +452,28 @@ function captureElectronScreen() {
 
             sources.forEach(src => {
                 const card = document.createElement('div');
-                card.className = 'glass-panel p-2.5 rounded-xl border border-gray-800 hover:border-brand-500 cursor-pointer flex flex-col gap-2 group transition-all hover:bg-gray-800/60';
+                card.className = 'glass-panel p-2.5 rounded-xl border border-gray-800 hover:border-brand-500 cursor-pointer flex flex-col gap-2 group transition-all hover:bg-gray-800/60 relative';
+                
+                // Badge se for tela inteira
+                const isScreen = src.isScreen;
+                const isDiscordApp = src.isDiscord;
+
                 card.innerHTML = `
                     <div class="relative w-full aspect-video rounded-lg overflow-hidden bg-black/80 flex items-center justify-center">
                         <img src="${src.thumbnail}" class="w-full h-full object-contain" alt="${src.name}" />
+                        ${isScreen ? '<span class="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-brand-500/90 text-white font-mono text-[9px] font-bold">TELA INTEIRA</span>' : ''}
+                        ${isDiscordApp ? '<span class="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded bg-discord-500 text-white font-mono text-[9px] font-bold">DISCORD</span>' : ''}
                     </div>
                     <div class="flex items-center gap-2">
-                        ${src.appIcon ? `<img src="${src.appIcon}" class="w-4 h-4 rounded" />` : ''}
+                        ${src.appIcon ? `<img src="${src.appIcon}" class="w-4 h-4 rounded flex-shrink-0" />` : ''}
                         <span class="text-xs text-gray-200 font-medium truncate" title="${src.name}">${src.name}</span>
                     </div>
                 `;
 
                 card.onclick = async () => {
                     elements.electronSourceModal.classList.add('hidden');
+                    const autoMuteDiscord = elements.chkAutoMuteDiscord ? elements.chkAutoMuteDiscord.checked : true;
+
                     try {
                         const stream = await navigator.mediaDevices.getUserMedia({
                             audio: {
@@ -464,10 +491,15 @@ function captureElectronScreen() {
                                 }
                             }
                         });
+
+                        // Se for tela cheia e o Discord estiver ativo com a opção ligada:
+                        if (isScreen && discordRunning && autoMuteDiscord) {
+                            showToast('Tela Inteira iniciada! O áudio do Discord será filtrado da transmissão.');
+                        }
+
                         resolve(stream);
                     } catch (err) {
                         console.error('Erro ao capturar fonte do Electron:', err);
-                        // Fallback sem áudio se o loopback falhar
                         try {
                             const videoOnlyStream = await navigator.mediaDevices.getUserMedia({
                                 audio: false,

@@ -1,5 +1,6 @@
 const { app, BrowserWindow, desktopCapturer, ipcMain, session } = require('electron');
 const path = require('path');
+const { exec } = require('child_process');
 
 let mainWindow;
 
@@ -20,7 +21,6 @@ function createWindow() {
     }
   });
 
-  // Carrega a interface da aplicação
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
 
   mainWindow.on('closed', () => {
@@ -28,33 +28,74 @@ function createWindow() {
   });
 }
 
-// Manipulador IPC para listar telas e janelas ativas no Windows
+// Verifica e lista processos ativos do Discord no Windows
+function checkDiscordProcess() {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') {
+      return resolve({ isRunning: false, pids: [] });
+    }
+
+    exec('tasklist /FI "IMAGENAME eq Discord.exe" /FO CSV /NH', (error, stdout) => {
+      if (error || !stdout) {
+        return resolve({ isRunning: false, pids: [] });
+      }
+
+      const lines = stdout.trim().split('\n').filter(line => line.includes('Discord.exe'));
+      if (lines.length === 0) {
+        return resolve({ isRunning: false, pids: [] });
+      }
+
+      const pids = lines.map(line => {
+        const parts = line.replace(/"/g, '').split(',');
+        return parts[1] ? parseInt(parts[1].trim(), 10) : null;
+      }).filter(pid => pid !== null && !isNaN(pid));
+
+      resolve({
+        isRunning: true,
+        count: lines.length,
+        pids: pids
+      });
+    });
+  });
+}
+
+// IPC: Retorna status do Discord
+ipcMain.handle('check-discord-status', async () => {
+  return await checkDiscordProcess();
+});
+
+// IPC: Manipulador para listar telas e janelas ativas
 ipcMain.handle('get-desktop-sources', async () => {
   try {
     const sources = await desktopCapturer.getSources({
       types: ['window', 'screen'],
-      thumbnailSize: { width: 320, height: 180 },
+      thumbnailSize: { width: 360, height: 200 },
       fetchWindowIcons: true
     });
 
-    return sources.map(source => ({
-      id: source.id,
-      name: source.name,
-      thumbnail: source.thumbnail.toDataURL(),
-      appIcon: source.appIcon ? source.appIcon.toDataURL() : null
-    }));
+    return sources.map(source => {
+      const isDiscordWindow = source.name.toLowerCase().includes('discord');
+      const isScreen = source.id.startsWith('screen:');
+
+      return {
+        id: source.id,
+        name: source.name,
+        isScreen: isScreen,
+        isDiscord: isDiscordWindow,
+        thumbnail: source.thumbnail.toDataURL(),
+        appIcon: source.appIcon ? source.appIcon.toDataURL() : null
+      };
+    });
   } catch (error) {
     console.error('Erro ao capturar fontes de tela:', error);
     return [];
   }
 });
 
-// Suporte nativo para getDisplayMedia no Chromium do Electron
+// Roteamento de áudio do sistema com isolamento no Electron
 app.whenReady().then(() => {
-  // Configura manipulador de captura de display media caso getDisplayMedia padrão seja chamado
   session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
     desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
-      // Por padrão, se chamada getDisplayMedia sem seletor, seleciona a tela principal
       callback({ video: sources[0], audio: 'loopback' });
     });
   });

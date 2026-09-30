@@ -509,6 +509,21 @@
                 </button>
             </div>
 
+            <!-- Status do Discord Detector -->
+            <div id="discordDetectionBar" class="px-3 py-2 rounded-xl bg-discord-500/10 border border-discord-500/30 flex items-center justify-between text-xs">
+                <div class="flex items-center gap-2">
+                    <span id="discordStatusDot" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span id="discordStatusMsg" class="text-discord-300 font-medium">Verificando Discord no Windows...</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <label class="inline-flex items-center cursor-pointer gap-2">
+                        <input type="checkbox" id="chkAutoMuteDiscord" checked class="sr-only peer">
+                        <div class="w-8 h-4 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-discord-500"></div>
+                        <span class="text-[11px] text-gray-300 font-medium">Mutar áudio do Discord em Tela Cheia</span>
+                    </label>
+                </div>
+            </div>
+
             <!-- Grid de telas e janelas -->
             <div id="sourcesGrid" class="grid grid-cols-2 sm:grid-cols-3 gap-3 overflow-y-auto max-h-[55vh] p-1">
                 <!-- Preenchido dinamicamente via JS -->
