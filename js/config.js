@@ -8,12 +8,12 @@ let currentMode = 'default';
 // URL Oficial da Web no Render para compartilhamento com quem assiste no navegador
 const WEB_APP_URL = 'https://streamp2p-zsv7.onrender.com';
 
-// Global Quality Configuration Object (Default: 1080p60 @ 6 Mbps, Motion)
+// Global Quality Configuration Object (Default: 1080p60 Estável @ 3.5 Mbps, Motion)
 const qualityConfig = {
     height: 1080,
     width: 1920,
     fps: 60,
-    bitrateBps: 6000000,
+    bitrateBps: 3500000,
     contentHint: 'motion'
 };
 
@@ -23,25 +23,25 @@ const PRESETS = {
         height: 1080,
         width: 1920,
         fps: 60,
-        bitrateBps: 6000000,
+        bitrateBps: 3500000,
         contentHint: 'motion',
-        title: 'Padrão (1080p60)'
+        title: 'Padrão Estável (1080p60)'
     },
     jogo: {
         height: 1080,
         width: 1920,
         fps: 60,
-        bitrateBps: 8000000,
+        bitrateBps: 5000000,
         contentHint: 'motion',
-        title: 'Modo Jogo (60FPS / 8M)'
+        title: 'Modo Jogo (60FPS / 5M)'
     },
     filme: {
-        height: 2160,
-        width: 3840,
+        height: 1080,
+        width: 1920,
         fps: 30,
-        bitrateBps: 10000000,
+        bitrateBps: 4000000,
         contentHint: 'detail',
-        title: 'Modo Filme (30FPS / 10M)'
+        title: 'Modo Filme (30FPS / 4M)'
     }
 };
 

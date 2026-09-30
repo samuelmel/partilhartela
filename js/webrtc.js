@@ -151,21 +151,6 @@ async function toggleScreenSharing() {
     }
 
     try {
-        const displayMediaOptions = {
-            video: {
-                displaySurface: "monitor",
-                width: { ideal: qualityConfig.width, max: qualityConfig.width },
-                height: { ideal: qualityConfig.height, max: qualityConfig.height },
-                frameRate: { ideal: qualityConfig.fps, max: qualityConfig.fps }
-            },
-            audio: {
-                echoCancellation: false,
-                noiseSuppression: false,
-                autoGainControl: false,
-                suppressLocalAudioPlayback: false
-            }
-        };
-
         updateStatus('connecting', 'Aguardando seleção de tela...');
 
         // Se estiver rodando dentro do aplicativo Electron, usa a API nativa
@@ -176,19 +161,47 @@ async function toggleScreenSharing() {
                 return;
             }
         } else {
-            // Modo Web/Navegador tradicional
+            // Modo Web/Navegador tradicional - sem displaySurface "monitor" para evitar congelamento
             try {
-                localStream = await navigator.mediaDevices.getDisplayMedia(displayMediaOptions);
+                localStream = await Promise.race([
+                    navigator.mediaDevices.getDisplayMedia({
+                        video: {
+                            width: { ideal: qualityConfig.width, max: qualityConfig.width },
+                            height: { ideal: qualityConfig.height, max: qualityConfig.height },
+                            frameRate: { ideal: qualityConfig.fps, max: qualityConfig.fps }
+                        },
+                        audio: {
+                            echoCancellation: false,
+                            noiseSuppression: false,
+                            autoGainControl: false,
+                            suppressLocalAudioPlayback: false
+                        }
+                    }),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout capturing screen')), 15000))
+                ]);
             } catch (fallbackErr) {
-                console.warn('Constraints específicas rejeitadas, tentando modo padrão...', fallbackErr);
-                localStream = await navigator.mediaDevices.getDisplayMedia({
-                    video: true,
-                    audio: true
-                });
+                console.warn('Erro ao capturar tela no modo navegador, tentando fallback:', fallbackErr);
+                try {
+                    localStream = await navigator.mediaDevices.getDisplayMedia({
+                        video: true,
+                        audio: true
+                    });
+                } catch (fallback2Err) {
+                    console.error('Falha completa na captura de tela:', fallback2Err);
+                    showToast('Não foi possível capturar tela. Tente usar o aplicativo Desktop.');
+                    isSharing = false;
+                    updateStatus('waiting', 'Erro na Captura');
+                    return;
+                }
             }
         }
-
-        isSharing = true;
+    } catch (err) {
+        console.error('Erro inesperado ao capturar tela:', err);
+        isSharing = false;
+        updateStatus('waiting', 'Erro na Captura');
+        showToast('Falha ao iniciar captura de tela.');
+        return;
+    }
 
         const videoTrack = localStream.getVideoTracks()[0];
         if (videoTrack) {
@@ -247,6 +260,8 @@ async function toggleScreenSharing() {
 
         setTimeout(() => {
             applyDynamicWebRTCBitrate(qualityConfig.bitrateBps);
+            // Inicia o monitor adaptativo de rede após a conexão estabilizar
+            setTimeout(() => startAdaptiveBitrateMonitor(), 3000);
         }, 600);
 
         refreshIcons();
@@ -294,6 +309,7 @@ function stopScreenSharing() {
     elements.btnToggleShare.classList.replace('hover:bg-red-500', 'hover:bg-brand-500');
 
     updateStatus('waiting', 'Sala Pronta (Aguardando)');
+    stopAdaptiveBitrateMonitor();
     showToast('Transmissão de tela encerrada.');
     refreshIcons();
 }
@@ -384,7 +400,7 @@ async function toggleMicrophoneCapture() {
     refreshIcons();
 }
 
-// Apply Dynamic Bitrate Tuning via RTCRtpSender.setParameters()
+// Apply Dynamic Bitrate Tuning via RTCRtpSender.setParameters() com degradação adaptativa
 function applyDynamicWebRTCBitrate(bitrateBps) {
     if (!peer) return;
 
@@ -403,12 +419,76 @@ function applyDynamicWebRTCBitrate(bitrateBps) {
                         } else {
                             delete params.encodings[0].maxBitrate;
                         }
+                        // Mantém FPS mesmo quando a rede piora — reduz qualidade mas NÃO trava
+                        params.encodings[0].degradationPreference = 'maintain-framerate';
                         sender.setParameters(params).catch(err => console.warn('Bitrate set err:', err));
                     }
                 });
             }
         });
     });
+}
+
+// Monitor adaptativo de qualidade de rede — ajusta bitrate automaticamente se houver perda de pacotes
+let _adaptiveMonitorInterval = null;
+function startAdaptiveBitrateMonitor() {
+    stopAdaptiveBitrateMonitor();
+    let consecutiveBadReports = 0;
+    let currentBitrate = qualityConfig.bitrateBps;
+
+    _adaptiveMonitorInterval = setInterval(async () => {
+        if (!peer || !isSharing) return;
+        let totalPacketsLost = 0;
+        let totalPacketsSent = 0;
+
+        try {
+            for (const connList of Object.values(peer.connections)) {
+                for (const conn of connList) {
+                    if (!conn.peerConnection) continue;
+                    const stats = await conn.peerConnection.getStats();
+                    stats.forEach(report => {
+                        if (report.type === 'outbound-rtp' && report.kind === 'video') {
+                            totalPacketsSent += report.packetsSent || 0;
+                        }
+                        if (report.type === 'remote-inbound-rtp' && report.kind === 'video') {
+                            totalPacketsLost += report.packetsLost || 0;
+                        }
+                    });
+                }
+            }
+        } catch (e) { return; }
+
+        const lossRate = totalPacketsSent > 0 ? (totalPacketsLost / totalPacketsSent) : 0;
+
+        if (lossRate > 0.05) {
+            // Rede ruim: reduz o bitrate em 25% para estabilizar
+            consecutiveBadReports++;
+            if (consecutiveBadReports >= 2) {
+                const reduced = Math.max(Math.floor(currentBitrate * 0.75), 600000);
+                if (reduced < currentBitrate) {
+                    currentBitrate = reduced;
+                    applyDynamicWebRTCBitrate(currentBitrate);
+                    console.warn(`[Adaptativo] Rede instável. Bitrate reduzido para ${Math.round(currentBitrate / 1000)} kbps`);
+                }
+                consecutiveBadReports = 0;
+            }
+        } else if (lossRate < 0.01 && currentBitrate < qualityConfig.bitrateBps) {
+            // Rede boa: recupera o bitrate gradualmente
+            consecutiveBadReports = 0;
+            const restored = Math.min(Math.floor(currentBitrate * 1.15), qualityConfig.bitrateBps);
+            if (restored > currentBitrate) {
+                currentBitrate = restored;
+                applyDynamicWebRTCBitrate(currentBitrate);
+            }
+        }
+    }, 4000); // Verifica a cada 4 segundos
+}
+
+function stopAdaptiveBitrateMonitor() {
+    if (_adaptiveMonitorInterval) {
+        clearInterval(_adaptiveMonitorInterval);
+        _adaptiveMonitorInterval = null;
+    }
 }
 
 // Apply Content Hint (motion vs detail)
@@ -472,9 +552,91 @@ function captureElectronScreen() {
 
                 card.onclick = async () => {
                     elements.electronSourceModal.classList.add('hidden');
-                    const autoMuteDiscord = elements.chkAutoMuteDiscord ? elements.chkAutoMuteDiscord.checked : true;
+                    const audioMode = elements.selectAudioSourceApp ? elements.selectAudioSourceApp.value : 'system_clean';
 
                     try {
+                        let finalStream = null;
+
+                        // Se for TELA INTEIRA e o modo for "Sistema Limpo (Sem Discord)":
+                        if (isScreen && audioMode === 'system_clean') {
+                            // 1. Captura o vídeo em tela cheia na qualidade máxima
+                            const screenVideoStream = await navigator.mediaDevices.getUserMedia({
+                                audio: false,
+                                video: {
+                                    mandatory: {
+                                        chromeMediaSource: 'desktop',
+                                        chromeMediaSourceId: src.id,
+                                        maxWidth: qualityConfig.width,
+                                        maxHeight: qualityConfig.height,
+                                        maxFrameRate: qualityConfig.fps
+                                    }
+                                }
+                            });
+
+                            // 2. Busca uma janela com som ativo (Jogo, Spotify, Navegador, etc.) excluindo o Discord
+                            const nonDiscordSources = sources.filter(s => !s.isScreen && !s.isDiscord);
+                            let cleanAudioTrack = null;
+
+                            for (const appSrc of nonDiscordSources) {
+                                try {
+                                    const appStream = await navigator.mediaDevices.getUserMedia({
+                                        video: {
+                                            mandatory: {
+                                                chromeMediaSource: 'desktop',
+                                                chromeMediaSourceId: appSrc.id,
+                                                maxWidth: 320,
+                                                maxHeight: 180,
+                                                maxFrameRate: 5
+                                            }
+                                        },
+                                        audio: {
+                                            mandatory: {
+                                                chromeMediaSource: 'desktop'
+                                            }
+                                        }
+                                    });
+
+                                    const aTrack = appStream.getAudioTracks()[0];
+                                    if (aTrack) {
+                                        cleanAudioTrack = aTrack;
+                                        // Interrompe o vídeo temporário do app
+                                        appStream.getVideoTracks().forEach(t => t.stop());
+                                        console.log(`Áudio isolado com sucesso do app: ${appSrc.name}`);
+                                        break;
+                                    } else {
+                                        appStream.getTracks().forEach(t => t.stop());
+                                    }
+                                } catch (appErr) {
+                                    // Continua procurando
+                                }
+                            }
+
+                            // 3. Monta o stream perfeito: Vídeo de Tela Cheia + Áudio Isolado
+                            finalStream = new MediaStream();
+                            screenVideoStream.getVideoTracks().forEach(vt => finalStream.addTrack(vt));
+
+                            if (cleanAudioTrack) {
+                                finalStream.addTrack(cleanAudioTrack);
+                                showToast('Tela Cheia ativa! O áudio foi isolado e o Discord está 100% mutado.');
+                            } else {
+                                // Fallback para áudio do sistema caso nenhum app esteja tocando
+                                try {
+                                    const fallbackStream = await navigator.mediaDevices.getUserMedia({
+                                        audio: { mandatory: { chromeMediaSource: 'desktop' } },
+                                        video: false
+                                    });
+                                    fallbackStream.getAudioTracks().forEach(at => finalStream.addTrack(at));
+                                    showToast('Tela Cheia ativa com áudio do sistema.');
+                                } catch (e) {
+                                    showToast('Tela Cheia ativa (sem áudio adicional detectado).');
+                                }
+                            }
+
+                            resolve(finalStream);
+                            return;
+                        }
+
+                        // Modo Padrão / Janela individual
                         const stream = await navigator.mediaDevices.getUserMedia({
                             audio: {
                                 mandatory: {
@@ -491,11 +653,6 @@ function captureElectronScreen() {
                                 }
                             }
                         });
-
-                        // Se for tela cheia e o Discord estiver ativo com a opção ligada:
-                        if (isScreen && discordRunning && autoMuteDiscord) {
-                            showToast('Tela Inteira iniciada! O áudio do Discord será filtrado da transmissão.');
-                        }
 
                         resolve(stream);
                     } catch (err) {

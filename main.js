@@ -2,6 +2,15 @@ const { app, BrowserWindow, desktopCapturer, ipcMain, session } = require('elect
 const path = require('path');
 const { exec } = require('child_process');
 
+// Aceleração por Hardware Dedicada (GPU / NVENC / AMD / Intel)
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-zero-copy');
+app.commandLine.appendSwitch('enable-hardware-overlays', 'single-fullscreen,single-on-top,underlay');
+app.commandLine.appendSwitch('disable-frame-rate-limit');
+app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling');
+app.commandLine.appendSwitch('force_high_performance_gpu');
+
 let mainWindow;
 
 function createWindow() {

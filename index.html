@@ -509,30 +509,36 @@
                 </button>
             </div>
 
-            <!-- Status do Discord Detector -->
-            <div id="discordDetectionBar" class="px-3 py-2 rounded-xl bg-discord-500/10 border border-discord-500/30 flex items-center justify-between text-xs">
+            <!-- Status do Discord Detector e Controle de Áudio -->
+            <div id="discordDetectionBar" class="p-3 rounded-xl bg-gray-900 border border-gray-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
                 <div class="flex items-center gap-2">
-                    <span id="discordStatusDot" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                    <span id="discordStatusMsg" class="text-discord-300 font-medium">Verificando Discord no Windows...</span>
+                    <span id="discordStatusDot" class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span id="discordStatusMsg" class="text-gray-200 font-medium">Discord detectado</span>
                 </div>
-                <div class="flex items-center gap-2">
-                    <label class="inline-flex items-center cursor-pointer gap-2">
-                        <input type="checkbox" id="chkAutoMuteDiscord" checked class="sr-only peer">
-                        <div class="w-8 h-4 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-discord-500"></div>
-                        <span class="text-[11px] text-gray-300 font-medium">Mutar áudio do Discord em Tela Cheia</span>
-                    </label>
+                <div class="flex items-center gap-2 w-full sm:w-auto">
+                    <span class="text-gray-400 font-medium">Transmitir Áudio de:</span>
+                    <select id="selectAudioSourceApp" class="bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-brand-500">
+                        <option value="system_clean" selected>🔊 Sistema Limpo (Sem Discord)</option>
+                        <option value="all">🔊 Todo o Som do PC (Padrão)</option>
+                    </select>
                 </div>
             </div>
 
+            <!-- Dica Explicativa de Áudio Isolado -->
+            <div class="px-3 py-2 rounded-xl bg-brand-500/10 border border-brand-500/20 text-brand-300 text-xs flex items-center gap-2">
+                <i data-lucide="shield-check" class="w-4 h-4 text-brand-400 flex-shrink-0"></i>
+                <span>Ao escolher <b>Tela Inteira</b>, o vídeo será a sua tela completa e o áudio será filtrado para eliminar o som do Discord.</span>
+            </div>
+
             <!-- Grid de telas e janelas -->
-            <div id="sourcesGrid" class="grid grid-cols-2 sm:grid-cols-3 gap-3 overflow-y-auto max-h-[55vh] p-1">
+            <div id="sourcesGrid" class="grid grid-cols-2 sm:grid-cols-3 gap-3 overflow-y-auto max-h-[50vh] p-1">
                 <!-- Preenchido dinamicamente via JS -->
             </div>
 
             <div class="flex items-center justify-between border-t border-gray-800 pt-3">
-                <span class="text-xs text-gray-400 flex items-center gap-1.5">
-                    <i data-lucide="volume-2" class="w-4 h-4 text-emerald-400"></i>
-                    Áudio do sistema integrado automaticamente
+                <span class="text-xs text-emerald-400 flex items-center gap-1.5">
+                    <i data-lucide="volume-2" class="w-4 h-4"></i>
+                    Filtro Anti-Eco de Voz Ativo
                 </span>
                 <button id="btnCancelSourceModal" class="px-4 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-medium transition-colors">
                     Cancelar

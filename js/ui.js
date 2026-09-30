@@ -93,7 +93,7 @@ function initDOMElements() {
         btnCancelSourceModal: document.getElementById('btnCancelSourceModal'),
         discordStatusDot: document.getElementById('discordStatusDot'),
         discordStatusMsg: document.getElementById('discordStatusMsg'),
-        chkAutoMuteDiscord: document.getElementById('chkAutoMuteDiscord')
+        selectAudioSourceApp: document.getElementById('selectAudioSourceApp')
     };
 }
 
