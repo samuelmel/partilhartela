@@ -161,84 +161,64 @@ async function probeNativeAudio() {
 }
 
 /**
- * Monta a track de audio da transmissao.
+ * Decide se o audio vem do addon nativo.
  *
- * Prioridade:
- *   1. addon nativo (audio do sistema SEM os PIDs excluidos)
- *   2. loopback do sistema (inclui o Discord - apenas como fallback)
+ * Se o addon responder positively, o video e capturado SO (audio:false) e a
+ * track nativa e acrescida depois. Se nao, o audio entra JUNTO com o video
+ * numa unica chamada getUserMedia, amarrada ao chromeMediaSourceId.
  *
- * @returns {Promise<{track:?MediaStreamTrack, mode:string, error:?string}>}
+ * @returns {Promise<{useNative:boolean, track:?MediaStreamTrack,
+ *                    excludedPids:number[], reason:?string}>}
  */
-async function buildAudioTrack(audioMode) {
-  const Utils = window.StreamP2P ? window.StreamP2P.Utils : null;
-  const stopAllTracks = Utils
-    ? Utils.stopAllTracks
-    : (s) => s && s.getTracks && s.getTracks().forEach((t) => t.stop());
-
-  // Estrategia 1: addon nativo (audio do sistema SEM os PIDs excluidos).
-  const wantsNative = audioMode !== 'system' && isElectron;
-
-  if (wantsNative) {
-    try {
-      const pidInfo = await window.electronAPI.getExcludedPids();
-      const pids = pidInfo && Array.isArray(pidInfo.pids) ? pidInfo.pids : [];
-      audioStrategy.excludedPids = pids;
-
-      if (elements.discordStatusDot) {
-        if (pidInfo && pidInfo.isRunning) {
-          elements.discordStatusDot.className =
-            'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse';
-          elements.discordStatusMsg.textContent =
-            'Discord detectado (' + pidInfo.count + ' processo(s)) - audio sera EXCLUIDO';
-        } else {
-          elements.discordStatusDot.className =
-            'w-2.5 h-2.5 rounded-full bg-gray-500';
-          elements.discordStatusMsg.textContent = 'Discord nao esta aberto no momento';
-        }
-      }
-
-      const result = await window.NativeAudioBridge.start({ excludedPids: pids });
-
-      if (result.ok) {
-        updateAudioFilterBadge(pids, true, null);
-        return {
-          track: result.track,
-          mode: 'native',
-          error: null,
-          excludedPids: pids
-        };
-      }
-
-      audioStrategy.lastError = result.error;
-      console.warn('[audio] addon nativo indisponivel:', result.error);
-      updateAudioFilterBadge([], false, result.error);
-    } catch (err) {
-      audioStrategy.lastError = err.message;
-      console.warn('[audio] falha ao iniciar addon nativo:', err);
-      updateAudioFilterBadge([], false, err.message);
-    }
+async function resolveAudioStrategy(audioMode) {
+  if (audioMode === 'system' || !isElectron) {
+    return {
+      useNative: false, track: null, excludedPids: [], reason: null
+    };
   }
 
-  // Estrategia 2 (fallback): loopback do endpoint de saida padrao.
-  // Este e o caminho historico do app: captura o audio do sistema pelo
-  // dispositivo de saida. Em testes anteriores nao capturava o Discord.
   try {
-    const audioOnly = await navigator.mediaDevices.getUserMedia({
-      audio: { mandatory: { chromeMediaSource: 'desktop' } },
-      video: false
-    });
+    const pidInfo = await window.electronAPI.getExcludedPids();
+    const pids = pidInfo && Array.isArray(pidInfo.pids) ? pidInfo.pids : [];
+    audioStrategy.excludedPids = pids;
 
-    const track = audioOnly.getAudioTracks()[0];
-    if (track) {
-      return { track: track, mode: 'loopback', error: null };
+    if (elements.discordStatusDot) {
+      if (pidInfo && pidInfo.isRunning) {
+        elements.discordStatusDot.className =
+          'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse';
+        elements.discordStatusMsg.textContent =
+          'Discord detectado (' + pidInfo.count +
+          ' processo(s)) - audio sera EXCLUIDO';
+      } else {
+        elements.discordStatusDot.className =
+          'w-2.5 h-2.5 rounded-full bg-gray-500';
+        elements.discordStatusMsg.textContent = 'Discord nao esta aberto no momento';
+      }
     }
-    stopAllTracks(audioOnly);
+
+    const result = await window.NativeAudioBridge.start({ excludedPids: pids });
+
+    if (result.ok) {
+      updateAudioFilterBadge(pids, true, null);
+      return {
+        useNative: true, track: result.track, excludedPids: pids, reason: null
+      };
+    }
+
+    audioStrategy.lastError = result.error;
+    console.warn('[audio] addon nativo indisponivel:', result.error);
+    updateAudioFilterBadge([], false, result.error);
   } catch (err) {
-    console.warn('[audio] loopback do sistema falhou:', err);
     audioStrategy.lastError = err.message;
+    console.warn('[audio] falha ao iniciar addon nativo:', err);
+    updateAudioFilterBadge([], false, err.message);
   }
 
-  return { track: null, mode: 'none', error: audioStrategy.lastError };
+  return {
+    useNative: false, track: null,
+    excludedPids: audioStrategy.excludedPids,
+    reason: audioStrategy.lastError
+  };
 }
 
 /**
@@ -438,49 +418,89 @@ function captureElectronScreen(utils) {
               return finish(null);
             }
 
-            // 1. Video sempre sem audio do sistema (o audio entra depois, filtrado)
-            updateStatus('connecting', 'Iniciando captura de video...');
-            screenVideoStream = await withTimeout(
-              navigator.mediaDevices.getUserMedia({
-                audio: false,
-                video: {
-                  mandatory: {
-                    chromeMediaSource: 'desktop',
-                    chromeMediaSourceId: src.id,
-                    maxWidth: qualityConfig.width,
-                    maxHeight: qualityConfig.height,
-                    maxFrameRate: qualityConfig.fps
-                  }
-                }
-              }),
-              10000,
-              'video da fonte',
-              stopAllTracks
-            );
-
-            // 2. Audio do sistema (nativo com exclusao, ou loopback como fallback)
-            updateStatus('connecting', 'Preparando audio...');
+            // 1. Decide a estrategia de audio ANTES de capturar.
+            //    Sem o addon nativo, o audio precisa vir na MESMA chamada do
+            //    video: getUserMedia so com audio desktop manda uma IPC invalida
+            //    ao Chromium e mata o renderer (bad_message.cc, reason 263).
+            updateStatus('connecting', 'Preparando captura...');
             const audioMode = elements.selectAudioSourceApp
               ? elements.selectAudioSourceApp.value
               : 'native';
-            const audioResult = await buildAudioTrack(audioMode);
+            const audioPlan = await resolveAudioStrategy(audioMode);
 
+            const videoConstraints = {
+              mandatory: {
+                chromeMediaSource: 'desktop',
+                chromeMediaSourceId: src.id,
+                maxWidth: qualityConfig.width,
+                maxHeight: qualityConfig.height,
+                maxFrameRate: qualityConfig.fps
+              }
+            };
+
+            // 2. Captura. No modo nativo o video vem sozinho (audio:false) e a
+            //    track filtrada e acrescida depois.
+            updateStatus('connecting',
+              audioPlan.useNative ? 'Iniciando captura de video...'
+                : 'Iniciando captura de video e audio...');
+
+            if (audioPlan.useNative) {
+              screenVideoStream = await withTimeout(
+                navigator.mediaDevices.getUserMedia({
+                  audio: false,
+                  video: videoConstraints
+                }),
+                10000,
+                'video da fonte',
+                stopAllTracks
+              );
+            } else {
+              // Audio e video juntos, ambos amarrados ao mesmo sourceId.
+              try {
+                screenVideoStream = await withTimeout(
+                  navigator.mediaDevices.getUserMedia({
+                    audio: {
+                      mandatory: {
+                        chromeMediaSource: 'desktop',
+                        chromeMediaSourceId: src.id
+                      }
+                    },
+                    video: videoConstraints
+                  }),
+                  10000,
+                  'video+audio da fonte',
+                  stopAllTracks
+                );
+              } catch (withAudioErr) {
+                // Sem audio e melhor do que derrubar o renderer.
+                console.warn('[audio] captura com audio falhou, indo so video:',
+                  withAudioErr);
+                showToast('Audio indisponivel para esta fonte; seguindo com video.');
+                screenVideoStream = await withTimeout(
+                  navigator.mediaDevices.getUserMedia({
+                    audio: false,
+                    video: videoConstraints
+                  }),
+                  10000,
+                  'video da fonte',
+                  stopAllTracks
+                );
+              }
+            }
+
+            // 3. Monta o stream final
             const finalStream = new MediaStream();
             screenVideoStream.getVideoTracks().forEach((vt) => finalStream.addTrack(vt));
 
-            if (audioResult.track) {
-              finalStream.addTrack(audioResult.track);
-              showToast(
-                audioResult.mode === 'native'
-                  ? 'Audio capturado com o Discord EXCLUIDO (' +
-                    (audioResult.excludedPids || []).length + ' PID).'
-                  : 'Audio do sistema capturado.'
-              );
+            if (audioPlan.useNative && audioPlan.track) {
+              finalStream.addTrack(audioPlan.track);
+              showToast('Audio capturado com o Discord EXCLUIDO (' +
+                (audioPlan.excludedPids || []).length + ' PID).');
             } else {
-              showToast(
-                'Video sem audio: o sistema nao liberou captura de audio. ' +
-                'Verifique as permissoes de som do Windows.'
-              );
+              const hasAudio = finalStream.getAudioTracks().length > 0;
+              showToast(hasAudio
+                ? 'Audio capturado junto com o video.'
+                : 'Video sem audio.');
             }
 
             return finish(finalStream);

@@ -22,7 +22,9 @@
     "postinstall": "npm run sync:shared",
     "pack": "npm run prebuild && electron-builder --dir --projectDir apps/desktop",
     "dist": "npm run prebuild && electron-builder --win --projectDir apps/desktop",
-    "check": "node scripts/check-syntax.js"
+    "check": "node scripts/check-syntax.js",
+    "probe:capture": "electron apps/desktop/probe.js",
+    "smoke": "node apps/desktop/smoke.js"
   },
   "devDependencies": {
     "electron": "^44.5.0",

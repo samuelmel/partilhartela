@@ -69,6 +69,8 @@ streamp2p/
 | `npm start` | Sobe o app Electron (dev) |
 | `npm run start:web` | Serve `apps/web` em `http://127.0.0.1:5173` |
 | `npm run check` | Valida sintaxe de todos os JS + estrutura dos HTML |
+| `npm run probe:capture` | Testa as variantes de captura e detecta queda do renderer |
+| `npm run smoke` | Testa os módulos do processo main (sem abrir janela) |
 | `npm run sync:shared` | Sincroniza `packages/shared` para os apps |
 | `npm run build:web` | Regenera `apps/web/index.html` a partir do desktop |
 | `npm run build:native` | Compila o addon (contra o ABI do **Node**) |
@@ -174,7 +176,50 @@ Microfone: nunca entra na captura do sistema (o botão **Microfone** adiciona um
 
 ---
 
-## 8. Problemas comuns
+## 8. Bug do "renderer morre" (`bad_message.cc, reason 263`)
+
+**Sintoma:** a tela congela e o log mostra
+`Terminating renderer for bad IPC message, reason 263`.
+
+**Causa:** `getUserMedia` com **áudio de desktop isolado** derruba o renderer nesta
+versão do Electron:
+
+```js
+// NUNCA fazer isso no Electron desktop:
+getUserMedia({ audio: { mandatory: { chromeMediaSource: 'desktop' } }, video: false })
+```
+
+**Confirmado empiricamente** com `npm run probe:capture`:
+
+| Variante | Resultado |
+|---|---|
+| vídeo apenas | ✅ `video=1 audio=0` |
+| áudio + vídeo juntos, mesmo `sourceId` | ✅ `video=1 audio=1` |
+| áudio isolado | 💀 renderer `crashed`, exit 3 |
+
+**Correção:** o áudio sempre entra na mesma chamada do vídeo, amarrado ao
+`chromeMediaSourceId` da fonte escolhida. Se a chamada com áudio falhar, o app
+recae para vídeo apenas (`apps/desktop/js/webrtc.js`, bloco `resolveAudioStrategy`
++ `card.onclick`). O teste C do probe está comentado de propósito: descomentar
+reproduz o crash.
+
+## 9. Sobre os TURN do PeerJS
+
+```
+Failed to resolve address for eu-0.turn.peerjs.com
+```
+
+Esses hostnames vêm da configuração interna do PeerJS, injetada pelo PeerServer —
+**não** da lista `iceServers` que passamos. Não há como removê-los pelo lado do
+cliente. São logs ruidosos, e na prática não impedem nada: com host e viewer na
+**mesma máquina**, o ICE resolve por candidatos host, sem TURN. Se a sala não
+conectar, o suspects é o limite do broker público do PeerJS, não a config de ICE.
+
+`packages/shared/src/signaling.js` já usa apenas STUN (Google + Twilio).
+
+---
+
+## 10. Problemas comuns
 
 | Problema | Causa / solução |
 |---|---|

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Probe de captura</title>
+  <style>
+    body { font-family: monospace; background: #111; color: #ddd; padding: 20px; }
+    .ok { color: #4ade80; }
+    .fail { color: #f87171; }
+    .skip { color: #fbbf24; }
+    h2 { color: #60a5fa; }
+  </style>
+</head>
+<body>
+  <h2>Probe de captura de tela</h2>
+  <pre id="out"></pre>
+
+  <script>
+    const out = document.getElementById('out');
+    function log(msg, cls) {
+      const line = document.createElement('div');
+      line.className = cls || '';
+      line.textContent = msg;
+      out.appendChild(line);
+      // Reporta ao main por IPC: stdout do Electron nao e capturado no Windows.
+      window.probeAPI.report({ type: 'LOG', msg: msg });
+    }
+
+    window.probeSetCurrent = (name) =>
+      window.probeAPI.report({ type: 'START', test: name });
+
+    const VIDEO_CONSTRAINTS = (id) => ({
+      mandatory: {
+        chromeMediaSource: 'desktop',
+        chromeMediaSourceId: id,
+        maxWidth: 1920,
+        maxHeight: 1080,
+        maxFrameRate: 60
+      }
+    });
+
+    const AUDIO_ONLY = {
+      audio: { mandatory: { chromeMediaSource: 'desktop' } },
+      video: false
+    };
+
+    function stopAll(stream) {
+      if (stream && stream.getTracks) stream.getTracks().forEach(t => t.stop());
+    }
+
+    async function test(name, fn) {
+      window.probeSetCurrent(name);
+      log('--- iniciando: ' + name + ' ---');
+      try {
+        const stream = await fn();
+        const v = stream.getVideoTracks().length;
+        const a = stream.getAudioTracks().length;
+        log('OK   ' + name + ' -> video=' + v + ' audio=' + a, 'ok');
+        stopAll(stream);
+      } catch (err) {
+        log('FALHA ' + name + ' -> ' + err.name + ': ' + err.message, 'fail');
+      }
+      await new Promise(r => setTimeout(r, 800));
+    }
+
+    window.addEventListener('load', async () => {
+      let sources = [];
+      try {
+        sources = await window.probeAPI.getSources();
+        log('fontes recebidas: ' + sources.length);
+      } catch (err) {
+        log('falha ao listar fontes: ' + err.message, 'fail');
+        return;
+      }
+
+      const screen = sources.find(s => s.isScreen);
+      const win1 = sources.find(s => !s.isScreen);
+
+      log('screen: ' + (screen ? screen.name : 'nenhum'));
+      log('janela: ' + (win1 ? win1.name : 'nenhuma'));
+      log('');
+      log('>>> Se o renderer morrer, o teste que estava em curso e o culpado.');
+      log('');
+
+      // 1. Somente video (caminho que o app usa no modo nativo)
+      if (screen) {
+        await test('A) video-only + chromeMediaSourceId',
+          () => navigator.mediaDevices.getUserMedia({
+            audio: false, video: VIDEO_CONSTRAINTS(screen.id)
+          }));
+      }
+
+      // 2. Audio + video juntos (caminho do modo janela do app original)
+      if (screen) {
+        await test('B) audio+video juntos (screen)',
+          () => navigator.mediaDevices.getUserMedia({
+            audio: { mandatory: { chromeMediaSource: 'desktop' } },
+            video: VIDEO_CONSTRAINTS(screen.id)
+          }));
+      }
+
+      // 3. Audio isolado: DERRUBA o renderer nesta versao do Electron.
+      //    O teste fica commented de proposito -- se for descomentado, o
+      //    probe vai crashar de proposito e registrar RENDERER_GONE.
+      //    Referencia: apps/desktop/js/webrtc.js nunca deve chamar
+      //    getUserMedia com audio desktop e video:false.
+      //
+      // await test('C) audio-ONLY (derruba o renderer)',
+      //   () => navigator.mediaDevices.getUserMedia({
+      //     audio: { mandatory: { chromeMediaSource: 'desktop' } },
+      //     video: false
+      //   }));
+
+      log('');
+      log('=== Todos os testes concluidos sem derrubar o renderer ===', 'ok');
+      window.probeAPI.report({ type: 'DONE' });
+    });
+  </script>
+</body>
+</html>
