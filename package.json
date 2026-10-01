@@ -24,6 +24,7 @@
     "dist": "npm run prebuild && electron-builder --win --projectDir apps/desktop",
     "check": "node scripts/check-syntax.js",
     "probe:capture": "electron apps/desktop/probe.js",
+    "probe:p2p": "electron apps/desktop/probe-p2p.js",
     "smoke": "node apps/desktop/smoke.js"
   },
   "devDependencies": {

@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Probe P2P</title>
+  <style>
+    body { font-family: monospace; background: #111; color: #ddd; padding: 16px; font-size: 13px; }
+    h2 { color: #60a5fa; }
+    .host { color: #fbbf24; }
+    .viewer { color: #a78bfa; }
+    .ok { color: #4ade80; }
+    .fail { color: #f87171; }
+  </style>
+</head>
+<body>
+  <h2 id="title">Probe P2P</h2>
+  <pre id="out"></pre>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const ROLE = params.get('role') || 'host';
+    const OTHER = ROLE === 'host' ? 'viewer' : 'host';
+    // Tom interno desligado quando o teste usa audio externo.
+    const USE_TONE = params.get('tone') !== '0';
+
+    const out = document.getElementById('out');
+    document.getElementById('title').textContent = 'Probe P2P - ' + ROLE;
+    document.getElementById('title').className = ROLE;
+
+    function log(msg, cls) {
+      const line = document.createElement('div');
+      line.className = cls || '';
+      line.textContent = '[' + ROLE + '] ' + msg;
+      out.appendChild(line);
+      window.p2p.report({ role: ROLE, type: 'LOG', msg: msg });
+    }
+
+    const ICE = {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:global.stun.twilio.com:3478' }
+      ]
+    };
+
+    const AUDIBLE = 0.0005; // ~-66 dBFS
+
+    function dbfs(rms) {
+      return rms > 0 ? (20 * Math.log10(rms)).toFixed(1) : '-inf';
+    }
+
+    // ---------------------------------------------------------------- HOST
+    async function runHost() {
+      log('iniciando');
+
+      // Tom de teste: garante sinal conhecido no device de saida padrao.
+      let toneCtx = null;
+      if (USE_TONE) {
+        try {
+          const Ctor = window.AudioContext || window.webkitAudioContext;
+          toneCtx = new Ctor();
+          await toneCtx.resume();
+          const osc = toneCtx.createOscillator();
+          const gain = toneCtx.createGain();
+          osc.frequency.value = 440;
+          gain.gain.value = 0.12;
+          osc.connect(gain);
+          gain.connect(toneCtx.destination);
+          osc.start();
+          log('tom 440Hz ligado');
+        } catch (err) {
+          log('tom falhou: ' + err.message, 'fail');
+        }
+      } else {
+        log('tom interno DESLIGADO - usando audio externo');
+      }
+
+      // Captura audio+video JUNTOS: audio isolado derruba o renderer.
+      const sources = await window.p2p.getSources();
+      const screen = sources[0];
+      if (!screen) {
+        log('nenhuma tela encontrada', 'fail');
+        return;
+      }
+      log('fonte: ' + screen.name);
+
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            mandatory: {
+              chromeMediaSource: 'desktop',
+              chromeMediaSourceId: screen.id,
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false
+            }
+          },
+          video: {
+            mandatory: {
+              chromeMediaSource: 'desktop',
+              chromeMediaSourceId: screen.id,
+              maxWidth: 640,
+              maxHeight: 360,
+              maxFrameRate: 15
+            }
+          }
+        });
+      } catch (err) {
+        log('getUserMedia falhou: ' + err.name + ' ' + err.message, 'fail');
+        return;
+      }
+
+      const audioTracks = stream.getAudioTracks();
+      log('captura: video=' + stream.getVideoTracks().length +
+        ' audio=' + audioTracks.length);
+
+      // RMS da captura local, como referencia antes da rede.
+      if (audioTracks[0]) {
+        const localRms = await measureRms(audioTracks[0], 1500);
+        log('RMS local (antes da rede): ' + localRms.toFixed(5) +
+          ' (' + dbfs(localRms) + ' dBFS)');
+        window.p2p.report({ role: ROLE, type: 'RMS_LOCAL', rms: localRms, dbfs: dbfs(localRms) });
+      }
+
+      const pc = new RTCPeerConnection(ICE);
+
+      // Mede o que realmente SAI pela conexao.
+      let statsTimer = null;
+      const trackStats = {
+        audio: { maxBytes: 0, maxPackets: 0, samples: 0 },
+        video: { maxBytes: 0, maxPackets: 0, samples: 0 }
+      };
+
+      async function pollStats() {
+        try {
+          const stats = await pc.getStats();
+          stats.forEach((r) => {
+            if (r.type === 'outbound-rtp') {
+              const bucket = r.kind === 'audio' ? trackStats.audio : trackStats.video;
+              bucket.maxBytes = Math.max(bucket.maxBytes, r.bytesSent || 0);
+              bucket.maxPackets = Math.max(bucket.maxPackets, r.packetsSent || 0);
+              bucket.samples++;
+            }
+            if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.nominated) {
+              trackStats.pair = {
+                local: r.localCandidateId, remote: r.remoteCandidateId
+              };
+            }
+          });
+        } catch (e) { /* ignora */ }
+      }
+
+      window.p2p.onSignal(async (msg) => {
+        if (msg.from !== OTHER) return;
+        const payload = msg.payload;
+
+        if (payload.type === 'answer') {
+          await pc.setRemoteDescription(payload.sdp);
+          log('answer aplicado');
+        } else if (payload.candidate) {
+          try { await pc.addIceCandidate(payload.candidate); } catch (e) {}
+        }
+      });
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          window.p2p.signal(ROLE, OTHER, { candidate: e.candidate.toJSON() });
+        }
+      };
+
+      stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+
+      pc.onconnectionstatechange = () => {
+        log('connectionState=' + pc.connectionState);
+        window.p2p.report({ role: ROLE, type: 'CONN_STATE', state: pc.connectionState });
+      };
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      window.p2p.signal(ROLE, OTHER, {
+        type: 'offer',
+        sdp: { type: offer.type, sdp: offer.sdp }
+      });
+      log('offer enviado');
+
+      // Amostra os stats durante 8s.
+      statsTimer = setInterval(pollStats, 400);
+
+      await new Promise((r) => setTimeout(r, 8000));
+      clearInterval(statsTimer);
+
+      const audioSending = trackStats.audio.maxBytes > 0;
+      log('audio enviado: bytes=' + trackStats.audio.maxBytes +
+        ' packets=' + trackStats.audio.maxPackets,
+        audioSending ? 'ok' : 'fail');
+
+      window.p2p.report({
+        role: ROLE,
+        type: 'SENDER_STATS',
+        audio: trackStats.audio,
+        video: trackStats.video
+      });
+
+      stream.getTracks().forEach((t) => t.stop());
+      if (toneCtx) { try { await toneCtx.close(); } catch (e) {} }
+      pc.close();
+    }
+
+    // -------------------------------------------------------------- VIEWER
+    async function runViewer() {
+      log('aguardando offer');
+
+      const pc = new RTCPeerConnection(ICE);
+
+      const received = { audio: null, video: null, tracks: [] };
+
+      window.p2p.onSignal(async (msg) => {
+        if (msg.from !== OTHER) return;
+        const payload = msg.payload;
+
+        if (payload.type === 'offer') {
+          await pc.setRemoteDescription(payload.sdp);
+          log('offer recebido, answering');
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          window.p2p.signal(ROLE, OTHER, {
+            type: 'answer',
+            sdp: { type: answer.type, sdp: answer.sdp }
+          });
+        } else if (payload.candidate) {
+          try { await pc.addIceCandidate(payload.candidate); } catch (e) {}
+        }
+      });
+
+      pc.ontrack = (e) => {
+        const kind = e.track.kind;
+        received.tracks.push(kind);
+        log('track recebida: ' + kind + ' label="' + e.track.label + '"');
+        if (kind === 'audio') received.audio = e.track;
+        if (kind === 'video') {
+          received.video = e.track;
+          const s = e.track.getSettings();
+          window.p2p.report({ role: ROLE, type: 'VIDEO_SETTINGS', settings: s });
+        }
+        window.p2p.report({ role: ROLE, type: 'TRACK_RECEIVED', kind, label: e.track.label });
+      };
+
+      pc.onconnectionstatechange = () => {
+        log('connectionState=' + pc.connectionState);
+        window.p2p.report({ role: ROLE, type: 'CONN_STATE', state: pc.connectionState });
+      };
+
+      // Mede o sinal RECEBIDO.
+      const deadline = Date.now() + 14000;
+      while (Date.now() < deadline && !received.audio) {
+        await new Promise((r) => setTimeout(r, 200));
+      }
+
+      if (!received.audio) {
+        log('NENHUMA faixa de audio recebida', 'fail');
+        window.p2p.report({
+          role: ROLE,
+          type: 'VIEWER_RESULT',
+          hasAudio: false,
+          tracks: received.tracks
+        });
+        pc.close();
+        return;
+      }
+
+      log('faixa de audio recebida, medindo RMS...');
+
+      // IMPORTANTE: uma track remota so entrega amostras quando algum
+      // elemento de midia a consome. O app real faz isso via
+      // remoteVideo.srcObject; o probe precisa espelhar esse padrao,
+      // senao mede zero e da falso negativo.
+      const sink = document.createElement('audio');
+      sink.autoplay = true;
+      sink.muted = true;              // evita eco; elemento mudo ainda puxa a track
+      sink.srcObject = new MediaStream([received.audio]);
+      document.body.appendChild(sink);
+
+      let playState = 'desconhecido';
+      try {
+        await sink.play();
+        playState = 'tocando';
+      } catch (err) {
+        playState = 'bloqueado (' + err.name + ')';
+      }
+      log('elemento de consumo: ' + playState);
+
+      await new Promise((r) => setTimeout(r, 400));
+
+      const rms = await measureRms(received.audio, 3000);
+
+      log('RMS recebido: ' + rms.toFixed(5) + ' (' + dbfs(rms) + ' dBFS)',
+        rms > AUDIBLE ? 'ok' : 'fail');
+
+      // Estado real do elemento de video (politica de autoplay).
+      const hasVideo = Boolean(received.video);
+      window.p2p.report({
+        role: ROLE,
+        type: 'VIEWER_RESULT',
+        hasAudio: true,
+        audible: rms > AUDIBLE,
+        rms: Number(rms.toFixed(6)),
+        dbfs: dbfs(rms),
+        tracks: received.tracks,
+        hasVideo,
+        sinkPlayState: playState
+      });
+
+      pc.close();
+    }
+
+    // ------------------------------------------------------- medidor RMS
+    async function measureRms(track, ms) {
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      const ctx = new Ctor();
+      try {
+        await ctx.resume();
+        const source = ctx.createMediaStreamSource(new MediaStream([track]));
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 2048;
+        source.connect(analyser);
+
+        const mute = ctx.createGain();
+        mute.gain.value = 0;
+        analyser.connect(mute);
+        mute.connect(ctx.destination);
+
+        const buf = new Float32Array(analyser.fftSize);
+        let maxRms = 0;
+        const deadline = performance.now() + ms;
+
+        while (performance.now() < deadline) {
+          analyser.getFloatTimeDomainData(buf);
+          let sum = 0;
+          for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+          const rms = Math.sqrt(sum / buf.length);
+          if (rms > maxRms) maxRms = rms;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+
+        try { source.disconnect(); mute.disconnect(); } catch (e) {}
+        return maxRms;
+      } finally {
+        try { await ctx.close(); } catch (e) {}
+      }
+    }
+
+    window.addEventListener('load', () => {
+      const run = ROLE === 'host' ? runHost() : runViewer();
+      run.catch((err) => {
+        log('ERRO FATAL: ' + err.message, 'fail');
+        window.p2p.report({ role: ROLE, type: 'FATAL', message: err.message });
+      });
+    });
+  </script>
+</body>
+</html>
