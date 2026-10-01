@@ -222,7 +222,7 @@ async function toggleScreenSharing() {
       elements.audioStatusText.textContent = 'Audio Ativo';
       elements.audioStatusIcon.setAttribute('data-lucide', 'volume-2');
       elements.audioStatusBadge.classList.remove('hidden');
-      showToast('Atencao: no navegador o audio e o do sistema e pode incluir o Discord. Para isolar, use o aplicativo Desktop.');
+      showToast('Audio capturado. No seletor do navegador, marque "Compartilhar audio" para o espectador ouvir.');
     } else {
       elements.audioStatusText.textContent = 'Sem Audio';
       elements.audioStatusIcon.setAttribute('data-lucide', 'volume-x');

@@ -24,15 +24,15 @@ const OLD_SCRIPTS = `    <!-- Application Script Modules (Injected in correct de
     <script src="js/app.js"></script>`;
 
 const NEW_SCRIPTS = `    <!-- Pacote compartilhado (Host + Receptor) -->
-  <script src="js/shared/quality.js?v=20261001-3"></script>
-  <script src="js/shared/signaling.js?v=20261001-3"></script>
-  <script src="js/shared/utils.js?v=20261001-3"></script>
+  <script src="js/shared/quality.js?v=20261001-4"></script>
+  <script src="js/shared/signaling.js?v=20261001-4"></script>
+  <script src="js/shared/utils.js?v=20261001-4"></script>
 
     <!-- Application Script Modules (Injected in correct dependency order) -->
-  <script src="js/config.js?v=20261001-3"></script>
-  <script src="js/ui.js?v=20261001-3"></script>
-  <script src="js/webrtc.js?v=20261001-3"></script>
-  <script src="js/app.js?v=20261001-3"></script>`;
+  <script src="js/config.js?v=20261001-4"></script>
+  <script src="js/ui.js?v=20261001-4"></script>
+  <script src="js/webrtc.js?v=20261001-4"></script>
+  <script src="js/app.js?v=20261001-4"></script>`;
 
 /**
  * Blocos que existem apenas no Desktop.

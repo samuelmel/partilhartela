@@ -282,19 +282,20 @@ function applyAudioTrackState(hasAudio) {
  * autoplay, o stream chega mas o video fica mudo: sintoma de "o espectador nao
  * escuta nada" que nao tem nada a ver com a captura no host.
  */
-function setupAudioUnlock() {
-  const video = elements.remoteVideo;
+function setupAudioUnlock(targetVideo) {
+  const video = targetVideo || elements.remoteVideo;
   const overlay = elements.audioUnlockOverlay;
   if (!video || !overlay) return;
 
   const unlock = () => {
-    video.muted = false;
-    video.play().then(() => {
-      overlay.classList.add('hidden');
-    }).catch(() => {
-      // Ainda bloqueado: deixa o overlay visivel.
-      overlay.classList.remove('hidden');
+    const plays = [];
+    streamTiles.forEach((tile, key) => {
+      if (key === 'local') return;
+      tile.muted = false;
+      plays.push(tile.play());
     });
+    Promise.all(plays).then(() => overlay.classList.add('hidden'))
+      .catch(() => overlay.classList.remove('hidden'));
   };
 
   overlay.onclick = unlock;
@@ -317,6 +318,11 @@ function hideAudioUnlock() {
 }
 
 const streamTiles = new Map();
+let selectedStreamVideo = null;
+
+function getSelectedStreamVideo() {
+  return selectedStreamVideo || elements.remoteVideo;
+}
 
 function ensureStreamTile(stream, key, muted) {
   let video = streamTiles.get(key);
@@ -331,7 +337,13 @@ function ensureStreamTile(stream, key, muted) {
       elements.streamGrid.appendChild(video);
     }
     streamTiles.set(key, video);
+    video.addEventListener('click', () => {
+      selectedStreamVideo = video;
+      streamTiles.forEach((tile) => tile.classList.remove('ring-2', 'ring-brand-400'));
+      video.classList.add('ring-2', 'ring-brand-400');
+    });
   }
+  selectedStreamVideo = selectedStreamVideo || video;
   video.srcObject = stream;
   video.muted = Boolean(muted);
   video.classList.remove('hidden');
@@ -358,6 +370,7 @@ function removeLocalStream() {
       elements.remoteVideo.muted = nextVideo.muted;
       nextVideo.remove();
       streamTiles.set(key, elements.remoteVideo);
+      selectedStreamVideo = elements.remoteVideo;
     } else {
       elements.remoteVideo.srcObject = null;
       elements.remoteVideo.classList.add('hidden');
@@ -365,6 +378,7 @@ function removeLocalStream() {
   } else {
     video.srcObject = null;
     video.remove();
+    if (selectedStreamVideo === video) selectedStreamVideo = null;
   }
   if (streamTiles.size === 0) {
     elements.videoPlaceholder.classList.remove('hidden');
@@ -379,8 +393,7 @@ function attachRemoteStream(stream, peerId) {
   elements.liveOverlay.classList.remove('hidden');
   elements.liveOverlay.classList.add('flex');
 
-  if (video === elements.remoteVideo) setupAudioUnlock();
-  else video.play().catch(() => {});
+  setupAudioUnlock(video);
 
   const videoTrack = stream.getVideoTracks()[0];
   if (videoTrack) {

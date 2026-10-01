@@ -99,9 +99,9 @@ function initRoomView(targetRoomId) {
   });
 
   elements.btnFullscreen.addEventListener('click', () => {
-    const stage = elements.remoteVideo.parentElement;
+    const target = getSelectedStreamVideo();
     if (!document.fullscreenElement) {
-      stage.requestFullscreen().catch((err) => {
+      target.requestFullscreen().catch((err) => {
         showToast('Erro ao ativar tela cheia: ' + err.message);
       });
     } else {
