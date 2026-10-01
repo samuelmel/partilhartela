@@ -69,7 +69,8 @@ streamp2p/
 | `npm start` | Sobe o app Electron (dev) |
 | `npm run start:web` | Serve `apps/web` em `http://127.0.0.1:5173` |
 | `npm run check` | Valida sintaxe de todos os JS + estrutura dos HTML |
-| `npm run probe:capture` | Testa as variantes de captura e detecta queda do renderer |
+| `npm run probe:capture` | Mede o RMS de áudio de cada fonte de captura |
+| `npm run probe:p2p` | Mede o áudio depois do WebRTC (host ↔ espectador) |
 | `npm run smoke` | Testa os módulos do processo main (sem abrir janela) |
 | `npm run sync:shared` | Sincroniza `packages/shared` para os apps |
 | `npm run build:web` | Regenera `apps/web/index.html` a partir do desktop |
@@ -237,41 +238,61 @@ conectar, o suspects é o limite do broker público do PeerJS, não a config de 
 
 ---
 
-## 10. Áudio do sistema no fallback — o que é verdade
+## 10. Áudio do sistema — medido, não suposto
 
-Medido com `npm run probe:capture` nesta máquina:
+Toda afirmação abaixo saiu de `npm run probe:capture` e `npm run probe:p2p`.
 
-| Variante | deviceId | canais | EC/AGC/NS |
-|---|---|---|---|
-| `getUserMedia` áudio+vídeo, `sourceId` = tela | `loopback` | 2 | desligados |
-| `getUserMedia` áudio+vídeo, `sourceId` = **janela** | `loopback` | 2 | desligados |
-| `getDisplayMedia` + handler Electron | `loopback` | **1** | **ligados** |
+### Captura (antes da rede)
 
-Duas conclusões que contrariam a intuição:
+Um tom de 440 Hz com ganho 0,12 é tocado na saída padrão e medido em cada fonte
+via `AnalyserNode`:
 
-1. **O fallback já captura áudio global.** No Electron o Chromium ignora o
-   `chromeMediaSourceId` do áudio e sempre devolve o loopback do dispositivo de
-   saída padrão (`deviceId: "loopback"`). Amarrar o áudio a uma janela **não**
-   restringe o áudio aquela janela.
-2. **Trocar para `getDisplayMedia` seria uma regressão.** O handler entrega a
-   mesma faixa em mono e com cancelamento de eco, supressão de ruído e AGC
-   **ligados** — o que degrada áudio de jogo e música.
+| Fonte | RMS | dBFS |
+|---|---|---|
+| Tela cheia | 0.085299 | −21.4 |
+| Windows PowerShell | 0.085354 | −21.4 |
+| Discord (BENGA) | 0.085456 | −21.4 |
+| Steam | 0.085314 | −21.4 |
+| Gerenciador de Tarefas | 0.085204 | −21.4 |
 
-### "O espectador não escuta nada" — causa provável
+RMS teórico de uma senoide 0,12 = `0.12/√2` = **0,0849**. As nove fontes medem
+0,0853 com spread de 0,0004: **todas capturam o mesmo mix global**. Amarrar o
+áudio a uma janela **não** restringe o áudio aquela janela.
 
-Não é a captura. Duas causas reais, na ordem de probabilidade:
+### Transporte (depois do WebRTC)
 
-1. **Política de autoplay do Chrome.** O stream chega, mas o áudio só toca após
-   um gesto do usuário. A UI agora mostra um overlay **"Clique para ativar o
-   áudio"** quando o playback é recusado (`setupAudioUnlock()` em `ui.js`).
-2. **Som em outro dispositivo de saída.** O loopback captura apenas o
-   dispositivo de saída **padrão** do Windows. Se o YouTube toca em fone
-   enquanto o padrão são as caixas, não entra. Não há como contornar sem o
-   addon nativo.
+Duas janelas Electron trocam SDP por IPC, sem depender do PeerServer:
 
-Diagnóstico rápido: abra o DevTools no espectador e veja o log
-`[audio] track recebida: ... deviceId=loopback`. Se aparecer, o áudio chegou e o
-problema é autoplay. Se não aparecer, o host não mandou faixa de áudio.
+| Ponto | Valor |
+|---|---|
+| Captura local (host) | 0.30707 (−10.3 dBFS) |
+| Enviado (`outbound-rtp` de áudio) | 30.944 bytes / 379 pacotes |
+| **Recebido (viewer)** | **0.28460 (−10.9 dBFS)** — audível |
+
+Perda de 0,6 dB, compatível com o Opus. **O caminho de áudio funciona.**
+
+### Duas armadilhas que os probes revelaram
+
+1. **O tom do próprio renderer é excluído do caminho WebRTC.** Com tom interno
+   o envio foi de 2.957 bytes; com áudio externo (`SoundPlayer` do PowerShell),
+   30.944 bytes. O `AnalyserNode` enxerga o áudio da própria página, mas o
+   encoder não o envia. Por isso o probe aceita `P2P_TONE=0`.
+2. **Track remota só entrega amostras quando algo a consome.** Medir a faixa
+   recebida sem ligar um `<audio>`/`<video>` dá zero — falso negativo. O app já
+   faz certo (`remoteVideo.srcObject = stream`).
+
+### Se o espectador não ouve
+
+O transporte está provado. Restam duas causas, nenhuma no app:
+
+1. **Política de autoplay do Chrome.** O áudio chega, mas não toca sem gesto. A UI
+   mostra o overlay "Clique para ativar o áudio" quando o `play()` é recusado.
+2. **Som em outro dispositivo de saída.** O loopback cobre só o dispositivo
+   **padrão** do Windows.
+
+Diagnóstico: no DevTools do espectador, procure
+`[audio] track recebida: ... deviceId=loopback`. Se aparecer, o áudio chegou —
+o problema é autoplay. Se não aparecer, o host não mandou faixa.
 
 ---
 
