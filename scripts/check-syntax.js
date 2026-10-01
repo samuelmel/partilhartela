@@ -186,7 +186,8 @@ function main() {
       .filter((src) => !isExternal(src));
 
     scripts.forEach((src) => {
-      const resolved = path.join(path.dirname(file), src);
+      const localSrc = src.split(/[?#]/, 1)[0];
+      const resolved = path.join(path.dirname(file), localSrc);
       if (!fs.existsSync(resolved)) {
         problems.push('script inexistente: ' + src);
       }

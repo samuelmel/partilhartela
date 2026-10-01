@@ -13,7 +13,6 @@ const WEB_APP_URL = '';
 // Estado global do WebRTC
 let peer = null;
 let localStream = null;
-let micStream = null;
 let activeCall = null;
 let roomHostPeerId = null;
 const activeDataConns = new Map();
@@ -21,7 +20,6 @@ let roomId = null;
 let isHost = false;
 let isSharing = false;
 let isAudioMuted = false;
-let isMicActive = false;
 let currentMode = 'default';
 
 // Estado do Web Audio

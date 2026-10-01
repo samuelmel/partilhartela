@@ -62,10 +62,6 @@ function initDOMElements() {
     btnCloseDiscordGuide: document.getElementById('btnCloseDiscordGuide'),
     btnGotItDiscord: document.getElementById('btnGotItDiscord'),
 
-    btnToggleMic: document.getElementById('btnToggleMic'),
-    iconToggleMic: document.getElementById('iconToggleMic'),
-    textToggleMic: document.getElementById('textToggleMic'),
-
     btnQualityModal: document.getElementById('btnQualityModal'),
     labelCurrentQuality: document.getElementById('labelCurrentQuality'),
     qualityModal: document.getElementById('qualityModal'),
@@ -173,8 +169,6 @@ function configureHostUI() {
   elements.btnToggleShare.classList.remove('hidden');
   elements.btnPlaceholderStart.classList.remove('hidden');
   elements.btnQualityModal.classList.remove('hidden');
-  elements.btnToggleMic.classList.remove('hidden');
-  elements.btnToggleMic.classList.add('flex');
   elements.viewerCountOverlay.classList.remove('hidden');
   elements.viewerCountOverlay.classList.add('flex');
 
@@ -204,7 +198,6 @@ function configureViewerUI() {
   elements.btnPlaceholderStart.querySelector('span').textContent =
     'Compartilhar Minha Tela';
   elements.btnQualityModal.classList.add('hidden');
-  elements.btnToggleMic.classList.add('hidden');
   elements.viewerCountOverlay.classList.add('hidden');
 
   elements.placeholderTitle.textContent = 'Conectado a Sala';

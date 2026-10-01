@@ -270,12 +270,6 @@ function stopScreenSharing() {
     localStream = null;
   }
   removeLocalStream();
-  if (micStream) {
-    micStream.getTracks().forEach((t) => t.stop());
-    micStream = null;
-    isMicActive = false;
-  }
-
   isSharing = false;
 
   activeDataConns.forEach((dataConn) => {
@@ -339,38 +333,6 @@ function toggleViewerAudioMute() {
     elements.iconToggleAudio.className = 'w-4 h-4 text-emerald-400';
     elements.textToggleAudio.textContent = 'Audio Ativo';
     showToast('Audio da transmissao ativado.');
-  }
-  refreshIcons();
-}
-
-async function toggleMicrophoneCapture() {
-  if (!isHost) return;
-
-  if (isMicActive) {
-    if (micStream) {
-      micStream.getTracks().forEach((t) => t.stop());
-      micStream = null;
-    }
-    isMicActive = false;
-    elements.iconToggleMic.setAttribute('data-lucide', 'mic-off');
-    elements.iconToggleMic.className = 'w-4 h-4 text-gray-400';
-    elements.textToggleMic.textContent = 'Microfone Desativado';
-    showToast('Microfone da transmissao desativado.');
-  } else {
-    try {
-      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (localStream) {
-        localStream.addTrack(micStream.getAudioTracks()[0]);
-      }
-      isMicActive = true;
-      elements.iconToggleMic.setAttribute('data-lucide', 'mic');
-      elements.iconToggleMic.className = 'w-4 h-4 text-emerald-400';
-      elements.textToggleMic.textContent = 'Microfone Ativo';
-      showToast('Microfone adicionado a transmissao!');
-    } catch (err) {
-      console.error('Erro ao acessar microfone:', err);
-      showToast('Permissao de microfone negada ou indisponivel.');
-    }
   }
   refreshIcons();
 }
