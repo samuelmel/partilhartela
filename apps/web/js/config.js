@@ -15,6 +15,7 @@ let peer = null;
 let localStream = null;
 let micStream = null;
 let activeCall = null;
+let roomHostPeerId = null;
 const activeDataConns = new Map();
 let roomId = null;
 let isHost = false;

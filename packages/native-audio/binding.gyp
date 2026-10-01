@@ -13,13 +13,13 @@
         "NAPI_VERSION=8",
         "NOMINMAX",
         "WIN32_LEAN_AND_MEAN",
-        "_WIN32_WINNT=0x0A00"
+        "_WIN32_WINNT=0x0A00",
+        "NTDDI_VERSION=0x0A00000A"
       ],
       "libraries": [
-        "-lAvrt.lib",
+        "-lmmdevapi.lib",
         "-lOle32.lib",
-        "-luuid.lib",
-        "-lksuser.lib"
+        "-luuid.lib"
       ],
       "msvs_settings": {
         "VCCLCompilerTool": {

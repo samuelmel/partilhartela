@@ -16,12 +16,15 @@
 const NativeAudio = {
   track: null,
   generator: null,
+  writer: null,
+  writeChain: Promise.resolve(),
   sampleRate: 48000,
   channels: 2,
   running: false,
   context: null,
   fallbackNode: null,
   lastError: null,
+  nextTimestamp: 0,
   _unsubscribers: []
 };
 
@@ -49,11 +52,19 @@ function createTrack(sampleRate, channels) {
   NativeAudio.channels = channels || 2;
 
   if (supportsGenerator()) {
-    NativeAudio.generator = new window.MediaStreamTrackGenerator({
-      kind: 'audio'
-    });
-    NativeAudio.track = NativeAudio.generator;
-    return NativeAudio.track;
+    try {
+      NativeAudio.generator = new window.MediaStreamTrackGenerator({
+        kind: 'audio'
+      });
+      NativeAudio.writer = NativeAudio.generator.writable.getWriter();
+      NativeAudio.writeChain = Promise.resolve();
+      NativeAudio.track = NativeAudio.generator;
+      return NativeAudio.track;
+    } catch (err) {
+      console.warn('[audio-native] Generator indisponivel, usando fallback:', err);
+      NativeAudio.generator = null;
+      NativeAudio.writer = null;
+    }
   }
 
   return createFallbackTrack(NativeAudio.sampleRate, NativeAudio.channels);
@@ -136,17 +147,27 @@ function createFallbackTrack(sampleRate, channels) {
 function writeChunk(pcm, channels) {
   if (!NativeAudio.running || !pcm || pcm.length === 0) return;
 
-  if (NativeAudio.generator && typeof window.AudioData === 'function') {
+  if (NativeAudio.writer && typeof window.AudioData === 'function') {
     try {
       const audioData = new window.AudioData({
         format: 's16',
         sampleRate: NativeAudio.sampleRate,
         numberOfFrames: Math.floor(pcm.length / channels),
         numberOfChannels: channels,
-        timestamp: 0,
+        timestamp: NativeAudio.nextTimestamp,
         data: pcm
       });
-      NativeAudio.generator.write(audioData);
+      NativeAudio.nextTimestamp += Math.round(
+        (audioData.numberOfFrames * 1000000) / NativeAudio.sampleRate
+      );
+      NativeAudio.writeChain = NativeAudio.writeChain
+        .then(() => NativeAudio.writer.ready)
+        .then(() => NativeAudio.writer.write(audioData))
+        .catch((err) => {
+          NativeAudio.lastError = err;
+          console.error('[audio-native] Falha ao escrever AudioData:', err);
+        })
+        .finally(() => audioData.close());
       return;
     } catch (err) {
       NativeAudio.lastError = err;
@@ -213,6 +234,13 @@ async function start(options) {
     if (!track) {
       throw new Error('Nao foi possivel criar a MediaStreamTrack de audio');
     }
+    // A track nativa nasce do MediaStreamTrackGenerator: nao passa por
+    // echoCancellation/noiseSuppression/autoGainControl do Chromium, o que e
+    // exatamente o que o audio do sistema precisa. Registrado para o
+    // diagnostico de senders em webrtc.js.
+    console.log('[audio] track nativa: kind=' + track.kind +
+      ' label="' + track.label + '" readyState=' + track.readyState +
+      ' (sem EC/NS/AGC, PCM s16 ' + sampleRate + 'Hz/' + channels + 'ch)');
   } catch (err) {
     await window.electronAPI.stopNativeAudio();
     NativeAudio.lastError = err.message;
@@ -264,6 +292,14 @@ async function stop() {
   });
   NativeAudio._unsubscribers = [];
   NativeAudio.running = false;
+  NativeAudio.nextTimestamp = 0;
+  NativeAudio.writeChain = Promise.resolve();
+
+  if (NativeAudio.writer) {
+    try { await NativeAudio.writer.abort(); } catch (e) { /* ignora */ }
+    try { NativeAudio.writer.releaseLock(); } catch (e) { /* ignora */ }
+    NativeAudio.writer = null;
+  }
 
   if (NativeAudio.generator) {
     try { NativeAudio.generator.close(); } catch (e) { /* ignora */ }

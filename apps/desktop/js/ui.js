@@ -30,6 +30,7 @@ function initDOMElements() {
     statusText: document.getElementById('statusText'),
 
     remoteVideo: document.getElementById('remoteVideo'),
+    streamGrid: document.getElementById('streamGrid'),
     remoteAudio: document.getElementById('remoteAudio'),
     audioUnlockOverlay: document.getElementById('audioUnlockOverlay'),
     videoPlaceholder: document.getElementById('videoPlaceholder'),
@@ -51,6 +52,7 @@ function initDOMElements() {
     btnToggleShare: document.getElementById('btnToggleShare'),
     iconToggleShare: document.getElementById('iconToggleShare'),
     textToggleShare: document.getElementById('textToggleShare'),
+    btnChangeSource: document.getElementById('btnChangeSource'),
 
     btnToggleAudio: document.getElementById('btnToggleAudio'),
     iconToggleAudio: document.getElementById('iconToggleAudio'),
@@ -60,10 +62,6 @@ function initDOMElements() {
     discordGuideModal: document.getElementById('discordGuideModal'),
     btnCloseDiscordGuide: document.getElementById('btnCloseDiscordGuide'),
     btnGotItDiscord: document.getElementById('btnGotItDiscord'),
-
-    btnToggleMic: document.getElementById('btnToggleMic'),
-    iconToggleMic: document.getElementById('iconToggleMic'),
-    textToggleMic: document.getElementById('textToggleMic'),
 
     btnQualityModal: document.getElementById('btnQualityModal'),
     labelCurrentQuality: document.getElementById('labelCurrentQuality'),
@@ -143,17 +141,20 @@ function updateViewerCount() {
 }
 
 /** Rotulo do filtro de audio nativo (exclusao de processo). */
-function updateAudioFilterBadge(pids, available, error) {
+function updateAudioFilterBadge(pids, available, error, filtered) {
   if (!elements.audioFilterText) return;
 
-  if (available && pids && pids.length > 0) {
+  if (available && filtered && pids && pids.length > 0) {
     elements.audioFilterBadge.classList.remove('hidden');
     elements.audioFilterText.textContent =
       'Áudio do sistema sem Discord (' + pids.length + ' PID excluído' +
       (pids.length > 1 ? 's' : '') + ')';
-  } else if (available) {
+  } else if (available && filtered) {
     elements.audioFilterBadge.classList.remove('hidden');
     elements.audioFilterText.textContent = 'Áudio do sistema (Discord fechado)';
+  } else if (available) {
+    elements.audioFilterBadge.classList.remove('hidden');
+    elements.audioFilterText.textContent = 'Áudio do sistema (sem filtro do Discord)';
   } else {
     elements.audioFilterBadge.classList.add('hidden');
     if (error) {
@@ -172,8 +173,6 @@ function configureHostUI() {
   elements.btnToggleShare.classList.remove('hidden');
   elements.btnPlaceholderStart.classList.remove('hidden');
   elements.btnQualityModal.classList.remove('hidden');
-  elements.btnToggleMic.classList.remove('hidden');
-  elements.btnToggleMic.classList.add('flex');
   elements.viewerCountOverlay.classList.remove('hidden');
   elements.viewerCountOverlay.classList.add('flex');
 
@@ -184,6 +183,7 @@ function configureHostUI() {
 
   elements.btnToggleShare.onclick = toggleScreenSharing;
   elements.btnPlaceholderStart.onclick = toggleScreenSharing;
+  elements.btnChangeSource.onclick = switchScreenSource;
   elements.btnToggleAudio.onclick = toggleAudioTrack;
 
   updateViewerCount();
@@ -191,22 +191,29 @@ function configureHostUI() {
 }
 
 function configureViewerUI() {
-  elements.roleText.textContent = 'Espectador (Receptor)';
+  elements.roleText.textContent = 'Participante';
   elements.roleBadge.classList.replace('bg-brand-500/10', 'bg-purple-500/20');
   elements.roleBadge.classList.replace('text-brand-400', 'text-purple-300');
   elements.roomRoleSubtitle.textContent =
-    'Voce esta assistindo a transmissao em tempo real nesta sala.';
+    'Voce pode assistir ou compartilhar sua propria tela nesta sala.';
 
-  elements.btnToggleShare.classList.add('hidden');
-  elements.btnPlaceholderStart.classList.add('hidden');
+  elements.btnToggleShare.classList.remove('hidden');
+  elements.iconToggleShare.setAttribute('data-lucide', 'screen-share');
+  elements.textToggleShare.textContent = 'Compartilhar Minha Tela';
+  elements.btnChangeSource.classList.add('hidden');
+  elements.btnChangeSource.classList.remove('flex');
+  elements.btnPlaceholderStart.classList.remove('hidden');
+  elements.btnPlaceholderStart.querySelector('span').textContent =
+    'Compartilhar Minha Tela';
   elements.btnQualityModal.classList.add('hidden');
-  elements.btnToggleMic.classList.add('hidden');
   elements.viewerCountOverlay.classList.add('hidden');
 
   elements.placeholderTitle.textContent = 'Conectado a Sala';
   elements.placeholderDesc.textContent =
-    'Aguardando o transmissor iniciar o compartilhamento de tela...';
+    'Assista à transmissão ou compartilhe sua tela com a sala.';
 
+  elements.btnToggleShare.onclick = toggleScreenSharing;
+  elements.btnPlaceholderStart.onclick = toggleScreenSharing;
   elements.btnToggleAudio.onclick = toggleViewerAudioMute;
   refreshIcons();
 }
@@ -309,15 +316,71 @@ function hideAudioUnlock() {
   }
 }
 
-function attachRemoteStream(stream) {
-  elements.remoteVideo.srcObject = stream;
-  elements.remoteVideo.muted = false;
-  elements.remoteVideo.classList.remove('hidden');
+const streamTiles = new Map();
+
+function ensureStreamTile(stream, key, muted) {
+  let video = streamTiles.get(key);
+  if (!video) {
+    if (!elements.remoteVideo.srcObject && streamTiles.size === 0) {
+      video = elements.remoteVideo;
+    } else {
+      video = document.createElement('video');
+      video.autoplay = true;
+      video.playsInline = true;
+      video.className = 'w-full h-full min-h-0 object-contain rounded-lg bg-black';
+      elements.streamGrid.appendChild(video);
+    }
+    streamTiles.set(key, video);
+  }
+  video.srcObject = stream;
+  video.muted = Boolean(muted);
+  video.classList.remove('hidden');
+  return video;
+}
+
+function attachLocalStream(stream) {
+  const video = ensureStreamTile(stream, 'local', true);
+  video.play().catch(() => {});
+  elements.videoPlaceholder.classList.add('hidden');
+  elements.liveOverlay.classList.remove('hidden');
+  elements.liveOverlay.classList.add('flex');
+}
+
+function removeLocalStream() {
+  const video = streamTiles.get('local');
+  if (!video) return;
+  streamTiles.delete('local');
+  if (video === elements.remoteVideo) {
+    const next = streamTiles.entries().next().value;
+    if (next) {
+      const [key, nextVideo] = next;
+      elements.remoteVideo.srcObject = nextVideo.srcObject;
+      elements.remoteVideo.muted = nextVideo.muted;
+      nextVideo.remove();
+      streamTiles.set(key, elements.remoteVideo);
+    } else {
+      elements.remoteVideo.srcObject = null;
+      elements.remoteVideo.classList.add('hidden');
+    }
+  } else {
+    video.srcObject = null;
+    video.remove();
+  }
+  if (streamTiles.size === 0) {
+    elements.videoPlaceholder.classList.remove('hidden');
+    elements.liveOverlay.classList.add('hidden');
+  }
+}
+
+function attachRemoteStream(stream, peerId) {
+  const streamKey = stream.id || peerId || 'primary';
+  const video = ensureStreamTile(stream, 'remote:' + streamKey, false);
   elements.videoPlaceholder.classList.add('hidden');
   elements.liveOverlay.classList.remove('hidden');
   elements.liveOverlay.classList.add('flex');
 
-  setupAudioUnlock();
+  if (video === elements.remoteVideo) setupAudioUnlock();
+  else video.play().catch(() => {});
 
   const videoTrack = stream.getVideoTracks()[0];
   if (videoTrack) {

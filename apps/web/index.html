@@ -203,7 +203,9 @@
             <div class="relative flex-1 min-h-[420px] sm:min-h-[500px] bg-black/90 rounded-2xl border border-gray-800 overflow-hidden flex items-center justify-center video-grid-pattern group shadow-2xl">
                 
                 <!-- Audio/Video Elements -->
-                <video id="remoteVideo" autoplay playsinline class="w-full h-full object-contain max-h-[78vh] hidden"></video>
+                <div id="streamGrid" class="w-full h-full grid grid-cols-1 md:grid-cols-2 auto-rows-fr gap-2 p-2">
+                    <video id="remoteVideo" autoplay playsinline class="w-full h-full min-h-0 object-contain max-h-[78vh] hidden"></video>
+                </div>
 
                 <!-- Audio Element for Viewer -->
                 <audio id="remoteAudio" autoplay class="hidden"></audio>
@@ -278,6 +280,12 @@
                         <span id="textToggleShare">Iniciar Compartilhamento</span>
                     </button>
 
+                    <!-- Troca de fonte durante a transmissão -->
+                    <button id="btnChangeSource" class="px-4 py-2.5 rounded-xl glass-button text-gray-200 font-medium text-sm items-center gap-2 cursor-pointer hidden" title="Trocar tela ou janela compartilhada">
+                        <i data-lucide="replace" class="w-4 h-4 text-brand-400"></i>
+                        <span>Trocar Fonte</span>
+                    </button>
+
                     <!-- Quality Config Button -->
                     <button id="btnQualityModal" class="px-4 py-2.5 rounded-xl glass-button text-gray-200 font-medium text-sm flex items-center gap-2 cursor-pointer border-brand-500/30 hover:border-brand-500/60">
                         <i data-lucide="sliders" class="w-4 h-4 text-brand-400"></i>
@@ -296,18 +304,13 @@
                         <span>Dica: Áudio Sem Discord</span>
                     </button>
 
-                    <!-- Microphone Toggle -->
-                    <button id="btnToggleMic" class="px-4 py-2.5 rounded-xl glass-button text-gray-200 font-medium text-sm flex items-center gap-2 cursor-pointer hidden" title="Transmitir áudio do seu microfone para o espectador">
-                        <i id="iconToggleMic" data-lucide="mic-off" class="w-4 h-4 text-gray-400"></i>
-                        <span id="textToggleMic">Microfone Desativado</span>
-                    </button>
                 </div>
 
                 <!-- Right Control Group: Secondary Utilities -->
                 <div class="flex items-center gap-3">
                     <!-- Audio Level Visualizer Indicator Bar -->
                     <div id="audioMeterContainer" class="hidden items-center gap-1.5 px-3 py-2 rounded-xl bg-gray-900/80 border border-gray-800">
-                        <i data-lucide="mic" class="w-3.5 h-3.5 text-gray-400"></i>
+                        <i data-lucide="volume-2" class="w-3.5 h-3.5 text-gray-400"></i>
                         <div class="w-16 h-2 bg-gray-800 rounded-full overflow-hidden">
                             <div id="audioMeterBar" class="h-full bg-emerald-500 w-0 transition-all duration-75"></div>
                         </div>

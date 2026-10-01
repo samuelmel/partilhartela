@@ -14,14 +14,13 @@ const APP_VERSION = '1.0.0';
 // Estado global do WebRTC
 let peer = null;
 let localStream = null;
-let micStream = null;
 let activeCall = null;
+let roomHostPeerId = null;
 const activeDataConns = new Map();
 let roomId = null;
 let isHost = false;
 let isSharing = false;
 let isAudioMuted = false;
-let isMicActive = false;
 let currentMode = 'default';
 
 /** Id da fonte de captura escolhida (tela ou janela). Usado para re-capturar audio. */
@@ -60,5 +59,9 @@ const audioStrategy = {
   /** Ultimo erro conhecido do addon nativo */
   lastError: null,
   /** true se o addon foi compilado e o SO suporta */
-  nativeAvailable: false
+  nativeAvailable: false,
+  /** true se a exclusao por processo esta de fato ativa na captura */
+  filtered: false,
+  /** Aviso do addon (ex.: fallback para loopback do endpoint) */
+  modeWarning: null
 };

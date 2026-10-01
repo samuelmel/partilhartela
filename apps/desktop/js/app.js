@@ -122,7 +122,5 @@ function initRoomView(targetRoomId) {
   elements.btnCancelQualityModal.addEventListener('click', closeQualityModal);
   elements.btnApplyQualityModal.addEventListener('click', applyQualitySettingsFromModal);
 
-  elements.btnToggleMic.addEventListener('click', toggleMicrophoneCapture);
-
   setupPeerJS(targetRoomId);
 }

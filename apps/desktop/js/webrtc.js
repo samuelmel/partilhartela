@@ -22,6 +22,7 @@ function setupPeerJS(targetRoomId) {
   const hostPeerId = Signaling
     ? Signaling.buildHostPeerId(targetRoomId)
     : 'streamp2p-room-' + targetRoomId;
+  roomHostPeerId = hostPeerId;
 
   const peerConfig = Signaling
     ? Signaling.PEER_CONFIG
@@ -56,8 +57,21 @@ function setupPeerJS(targetRoomId) {
       dataConn.send({ type: 'room-state', isSharing });
 
       if (isSharing && localStream) {
-        peer.call(dataConn.peer, localStream);
+        console.log('[audio-check] localStream: video=' +
+          localStream.getVideoTracks().length + ' audio=' +
+          localStream.getAudioTracks().length + ' (sistema=' +
+          getSystemAudioTracks(localStream).length + ')');
+        ensureSystemAudioTrackReady(localStream, 'novo espectador');
+        const mediaCall = peer.call(dataConn.peer, localStream);
+        // O sender de audio so existe depois da renegociacao: espera um pouco.
+        setTimeout(() => auditConnectionAudio('novo espectador'), 1500);
         setTimeout(() => applyDynamicWebRTCBitrate(qualityConfig.bitrateBps), 500);
+      }
+    });
+
+    dataConn.on('data', (data) => {
+      if (data && data.type === 'stream-stopped' && !isSharing) {
+        showViewerWaitingState('O participante interrompeu o compartilhamento de tela.');
       }
     });
 
@@ -68,15 +82,24 @@ function setupPeerJS(targetRoomId) {
   });
 
   peer.on('call', (call) => {
-    if (isSharing && localStream) {
-      call.answer(localStream);
-      setTimeout(() => applyDynamicWebRTCBitrate(qualityConfig.bitrateBps), 500);
-    }
+    const responseStream = isSharing && localStream ? localStream : undefined;
+    if (responseStream) ensureSystemAudioTrackReady(responseStream, 'call answered');
+    call.answer(responseStream);
+    call.on('stream', (incomingStream) => {
+      relayPublishedStream(incomingStream, call.peer);
+    });
+    call.on('close', () => {
+      if (!isSharing) showViewerWaitingState('Transmissao encerrada.');
+    });
+    call.on('error', (err) => console.error('Erro na publicacao recebida:', err));
+    setTimeout(() => auditConnectionAudio('call answered'), 1500);
+    setTimeout(() => applyDynamicWebRTCBitrate(qualityConfig.bitrateBps), 500);
   });
 }
 
 function setupAsViewer(targetRoomId, hostPeerId) {
   isHost = false;
+  roomHostPeerId = hostPeerId;
 
   const Signaling = window.StreamP2P ? window.StreamP2P.Signaling : null;
   const peerConfig = Signaling
@@ -113,7 +136,7 @@ function setupAsViewer(targetRoomId, hostPeerId) {
   peer.on('call', (call) => {
     activeCall = call;
     call.answer();
-    call.on('stream', (incomingStream) => attachRemoteStream(incomingStream));
+    call.on('stream', (incomingStream) => attachRemoteStream(incomingStream, call.peer));
     call.on('close', () => showViewerWaitingState('Transmissao encerrada.'));
     call.on('error', (err) => {
       console.error('Erro na chamada WebRTC:', err);
@@ -124,6 +147,20 @@ function setupAsViewer(targetRoomId, hostPeerId) {
   peer.on('error', (err) => {
     console.error('Erro no receptor:', err);
     updateStatus('error', 'Erro: ' + err.type);
+  });
+}
+
+/** Distribui a tela publicada por um participante aos demais participantes. */
+function relayPublishedStream(stream, publisherPeerId) {
+  if (!isSharing) attachRemoteStream(stream, publisherPeerId);
+
+  activeDataConns.forEach((dataConn, participantPeerId) => {
+    if (participantPeerId === publisherPeerId) return;
+    try {
+      peer.call(participantPeerId, stream);
+    } catch (err) {
+      console.error('Erro ao retransmitir stream publicada:', err);
+    }
   });
 }
 
@@ -173,7 +210,8 @@ async function probeNativeAudio() {
 async function resolveAudioStrategy(audioMode) {
   if (audioMode === 'system' || !isElectron) {
     return {
-      useNative: false, track: null, excludedPids: [], reason: null
+      useNative: false, track: null, excludedPids: [], filtered: false,
+      warning: null, reason: null
     };
   }
 
@@ -199,9 +237,16 @@ async function resolveAudioStrategy(audioMode) {
     const result = await window.NativeAudioBridge.start({ excludedPids: pids });
 
     if (result.ok) {
-      updateAudioFilterBadge(pids, true, null);
+      audioStrategy.filtered = Boolean(result.filtered);
+      audioStrategy.modeWarning = result.warning || null;
+      updateAudioFilterBadge(pids, true, null, audioStrategy.filtered);
       return {
-        useNative: true, track: result.track, excludedPids: pids, reason: null
+        useNative: true,
+        track: result.track,
+        excludedPids: pids,
+        filtered: audioStrategy.filtered,
+        warning: audioStrategy.modeWarning,
+        reason: null
       };
     }
 
@@ -217,19 +262,103 @@ async function resolveAudioStrategy(audioMode) {
   return {
     useNative: false, track: null,
     excludedPids: audioStrategy.excludedPids,
+    filtered: false,
+    warning: null,
     reason: audioStrategy.lastError
   };
 }
 
 /**
- * Substitui a track de audio em todos os senders ja negociados.
+ * Kind (audio/video) de um sender, mesmo sem track.
  *
- * Usado quando o Discord abre/fecha durante a transmissao: o espectador
- * passa a receber o audio filtrado sem precisar reconectar.
+ * Nao existe `sender.kind` na API padrao: com faixa nula (m-line negociado
+ * para envio mas sem faixa) o caminho correto e o transceiverreceiver.
+ */
+function senderKind(pc, sender) {
+  if (!sender) return null;
+  if (sender.track) return sender.track.kind;
+  try {
+    const transceiver = pc.getTransceivers().find((t) => t.sender === sender);
+    if (transceiver && transceiver.receiver && transceiver.receiver.track) {
+      return transceiver.receiver.track.kind;
+    }
+  } catch (err) {
+    /* getTransceivers indisponivel: cai para o campo legado */
+  }
+  return sender._initialKind || null;
+}
+
+/**
+ * Inventario de senders de audio de uma conexao.
+ *
+ * O m-line de audio do WebRTC carrega UMA faixa por negotiated renegotiation.
+ * O log confirma que a faixa do sistema permanece presente e ativa.
+ *
+ * @returns {number} quantidade de senders de audio com track
+ */
+function logAudioSenders(label, pc) {
+  if (!pc) return 0;
+  const senders = pc.getSenders();
+  const audioSenders = senders.filter((s) => s.track && s.track.kind === 'audio');
+  const audioLivres = senders.filter((s) => !s.track && senderKind(pc, s) === 'audio');
+  console.log(`[audio-check] ${label}: senders=${senders.length} ` +
+    `audio_com_track=${audioSenders.length} audio_sem_track=${audioLivres.length}`);
+  audioSenders.forEach((s, i) => {
+    const st = s.track.getSettings ? s.track.getSettings() : {};
+    console.log(`[audio-check]   audio#${i} label="${s.track.label}" ` +
+      `enabled=${s.track.enabled} readyState=${s.track.readyState} ` +
+      `deviceId=${st.deviceId || '-'}`);
+  });
+  return audioSenders.length;
+}
+
+/** Inventario de audio em todas as conexoes ativas. */
+function auditConnectionAudio(label) {
+  if (!peer || !peer.connections) return 0;
+  let total = 0;
+  Object.entries(peer.connections || {}).forEach(([peerId, list]) => {
+    (list || []).forEach((conn, i) => {
+      total += logAudioSenders(`${label} ${peerId}#${i}`, conn && conn.peerConnection);
+    });
+  });
+  console.log(`[audio-check] ${label}: total de senders de audio com track = ${total}`);
+  return total;
+}
+
+/** Rotulo legivel de uma faixa de audio do sistema. */
+function systemAudioLabel(track) {
+  if (!track) return 'nenhuma';
+  return track.label || 'loopback';
+}
+
+/** Todas as faixas de audio da captura de tela. */
+function getSystemAudioTracks(stream) {
+  if (!stream) return [];
+  return stream.getAudioTracks();
+}
+
+/** Confirma que a faixa de audio do sistema esta pronta antes do envio. */
+function ensureSystemAudioTrackReady(stream, context) {
+  const systemAudioTrack = stream && stream.getAudioTracks()[0];
+  if (systemAudioTrack && systemAudioTrack.readyState === 'live') {
+    systemAudioTrack.enabled = true;
+    console.log('[sistema-audio] Faixa do sistema pronta para envio:',
+      systemAudioTrack.label, context ? '(' + context + ')' : '');
+  } else {
+    console.warn('[sistema-audio] ALERTA: Faixa de áudio do sistema indisponível na stream local!');
+  }
+  return systemAudioTrack;
+}
+
+/**
+ * Envia o audio do sistema pelos senders de audio ja negociados.
+ *
+ * @returns {Promise<number>} conexoes atualizadas
  */
 async function replaceAudioTrackOnSenders(newTrack) {
   if (!peer || !newTrack) return 0;
 
+  ensureSystemAudioTrackReady(localStream, 'replaceTrack');
   let replaced = 0;
 
   Object.values(peer.connections || {}).forEach((connectionList) => {
@@ -237,27 +366,263 @@ async function replaceAudioTrackOnSenders(newTrack) {
       const pc = conn && conn.peerConnection;
       if (!pc) return;
 
+      let touched = false;
       pc.getSenders().forEach((sender) => {
-        const isAudio = sender.track
-          ? sender.track.kind === 'audio'
-          : (sender._initialKind === 'audio');
+        const isAudio = senderKind(pc, sender) === 'audio';
         if (!isAudio) return;
+        if (sender.track === newTrack) return;
 
         sender.replaceTrack(newTrack).then(() => {
-          replaced++;
+          touched = true;
         }).catch((err) => {
-          console.warn('Falha no replaceTrack de audio:', err);
+          console.warn('Falha no replaceTrack do audio do sistema:', err);
         });
       });
+
+      if (touched || newTrack) replaced++;
     });
   });
 
+  auditConnectionAudio('audio do sistema enviado');
   return replaced;
 }
 
-// ---------------------------------------------------------------------------
-// Captura de tela
-// ---------------------------------------------------------------------------
+/**
+ * Desliga o processamento de audio na faixa do sistema.
+ *
+ * Mantem o loopback sem filtros de processamento de voz.
+ */
+function hardenSystemAudioTrack(track) {
+  if (!track) return Promise.resolve(null);
+
+  const wanted = {
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
+    googEchoCancellation: false,
+    googAutoGainControl: false,
+    googNoiseSuppression: false,
+    googHighpassFilter: false
+  };
+
+  const log = (stage) => {
+    const st = track.getSettings ? track.getSettings() : {};
+    console.log(`[audio] ${stage}: label="${track.label}" ` +
+      `EC=${st.echoCancellation} NS=${st.noiseSuppression} ` +
+      `AGC=${st.autoGainControl}`);
+  };
+
+  log('audio do sistema');
+
+  if (typeof track.applyConstraints !== 'function') {
+    return Promise.resolve(track);
+  }
+
+  return track.applyConstraints(wanted)
+    .then(() => { log('pos applyConstraints'); return track; })
+    .catch((err) => {
+      console.warn('[audio] applyConstraints recusado na faixa do sistema:', err);
+      return track;
+    });
+}
+
+/** Limiar de audio audivel: ~-66 dBFS (mesmo criterio do probe de captura). */
+const AUDIBLE_RMS = 0.0005;
+
+/**
+ * Mede o RMS de pico de uma faixa de audio.
+ *
+ * Rotulo de track nao prova conteudo: `deviceId: loopback` aparece em qualquer
+ * audio de desktop, inclusive numa faixa muda. So o sinal medido diz se o
+ * YouTube/jogo realmente esta entrando.
+ *
+ * @returns {Promise<number>} RMS de pico, ou -1 se nao deu para medir
+ */
+async function measureTrackRms(track, ms) {
+  const Ctor = window.AudioContext || window.webkitAudioContext;
+  if (!Ctor || !track) return -1;
+
+  const ctx = new Ctor();
+  try {
+    if (ctx.state === 'suspended') await ctx.resume();
+
+    const source = ctx.createMediaStreamSource(new MediaStream([track]));
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    source.connect(analyser);
+
+    // Ganho 0: o no precisa estar conectado para ser processado.
+    const mute = ctx.createGain();
+    mute.gain.value = 0;
+    analyser.connect(mute);
+    mute.connect(ctx.destination);
+
+    const buf = new Float32Array(analyser.fftSize);
+    let maxRms = 0;
+    const deadline = performance.now() + ms;
+
+    while (performance.now() < deadline) {
+      analyser.getFloatTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+      const rms = Math.sqrt(sum / buf.length);
+      if (rms > maxRms) maxRms = rms;
+      await new Promise((r) => setTimeout(r, 40));
+    }
+
+    try { source.disconnect(); mute.disconnect(); } catch (e) { /* ignora */ }
+    return maxRms;
+  } catch (err) {
+    return -1;
+  } finally {
+    try { await ctx.close(); } catch (e) { /* ignora */ }
+  }
+}
+
+/**
+ * Descobre a melhor faixa de audio do sistema para a fonte escolhida.
+ *
+ * O Chromium nao isola audio por janela: amarrar o audio ao id de uma JANELA
+ * costuma devolver faixa muda. Amarrado a uma TELA, vem o loopback global. Por
+ * isso os candidatos sao testados e medidos - e o primeiro com sinal real
+ * vence, em vez de confiar no primeiro que "nao deu erro".
+ *
+ * @returns {Promise<?{track:MediaStreamTrack, via:string, rms:number}>}
+ */
+async function captureSystemAudioForSource(src, allSources, withTimeout,
+                                           stopAllTracks) {
+  const Ctor = window.AudioContext || window.webkitAudioContext;
+  const canMeasure = Boolean(Ctor);
+  let fallback = null;
+
+  // Candidatos de origem, na ordem de preferencia.
+  const screenSrc = (allSources || []).find((s) => s.isScreen);
+  const candidates = [];
+  if (src && src.isScreen) {
+    candidates.push({ id: src.id, via: 'tela' });
+  } else {
+    if (screenSrc) candidates.push({ id: screenSrc.id, via: 'tela (global)' });
+    if (src) candidates.push({ id: src.id, via: 'janela' });
+  }
+
+  const attempt = async (candidate) => {
+    // NUNCA audio sem video: audio isolado de desktop derruba o renderer.
+    const temp = await withTimeout(
+      navigator.mediaDevices.getUserMedia({
+        audio: {
+          mandatory: {
+            chromeMediaSource: 'desktop',
+            chromeMediaSourceId: candidate.id,
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+            googEchoCancellation: false,
+            googAutoGainControl: false,
+            googNoiseSuppression: false,
+            googHighpassFilter: false
+          }
+        },
+        video: {
+          mandatory: {
+            chromeMediaSource: 'desktop',
+            chromeMediaSourceId: candidate.id,
+            maxWidth: 320,
+            maxHeight: 180,
+            maxFrameRate: 5
+          }
+        }
+      }),
+      8000,
+      'audio via ' + candidate.via,
+      stopAllTracks
+    );
+
+    const track = temp.getAudioTracks()[0];
+    if (!track) {
+      stopAllTracks(temp);
+      return null;
+    }
+    temp.getVideoTracks().forEach((t) => t.stop());
+    await hardenSystemAudioTrack(track);
+
+    if (!canMeasure) {
+      return { track, via: candidate.via, rms: -1 };
+    }
+
+    const rms = await measureTrackRms(track, 700);
+    if (rms > AUDIBLE_RMS) {
+      return { track, via: candidate.via, rms };
+    }
+    console.warn('[audio] via ' + candidate.via + ' veio muda (rms=' +
+      rms.toFixed(5) + '): descartando');
+    try { track.stop(); } catch (e) { /* ignora */ }
+    return null;
+  };
+
+  for (const candidate of candidates) {
+    try {
+      const found = await attempt(candidate);
+      if (found) {
+        if (found.rms > AUDIBLE_RMS) {
+          console.log('[audio] capturado via ' + found.via + ' rms=' +
+            found.rms.toFixed(5));
+          return found;
+        }
+        // Faixa existe mas estava muda: guarda como reserva. Se NADA tiver
+        // sinal (nada tocando no momento), ela ainda e melhor que video
+        // mudo - medir ordena as opcoes, nao decide por elas.
+        if (!fallback) {
+          fallback = found;
+          console.warn('[audio] via ' + found.via + ' veio muda no teste ' +
+            '(rms=' + found.rms.toFixed(5) + '): guardada como reserva');
+        } else {
+          try { found.track.stop(); } catch (e) { /* ignora */ }
+        }
+      }
+    } catch (err) {
+      console.warn('[audio] via ' + candidate.via + ' falhou: ' +
+        (err && err.message));
+    }
+  }
+
+  if (fallback) {
+    showToast('Áudio capturado, mas nenhum sinal foi detectado na medição ' +
+      '(nada tocando?). Se o espectador não ouvir, toque um som e reinicie o ' +
+      'compartilhamento.');
+    return fallback;
+  }
+
+  // Ultimo recurso: getDisplayMedia com loopback global, via handler do main
+  // (que ja escolhe a primeira tela e evita o dialogo nativo).
+  try {
+    const temp = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        googEchoCancellation: false,
+        googAutoGainControl: false,
+        googNoiseSuppression: false,
+        googHighpassFilter: false
+      }
+    });
+    const track = temp.getAudioTracks()[0];
+    if (track) {
+      temp.getVideoTracks().forEach((t) => t.stop());
+      await hardenSystemAudioTrack(track);
+      const rms = canMeasure ? await measureTrackRms(track, 700) : -1;
+      console.log('[audio] capturado via getDisplayMedia rms=' +
+        (rms >= 0 ? rms.toFixed(5) : 'n/d'));
+      return { track, via: 'getDisplayMedia', rms };
+    }
+    stopAllTracks(temp);
+  } catch (err) {
+    console.warn('[audio] getDisplayMedia falhou: ' + (err && err.message));
+  }
+
+  return null;
+}
 
 async function toggleScreenSharing() {
   if (isSharing) {
@@ -301,9 +666,7 @@ async function toggleScreenSharing() {
     }
 
     // Preview local
-    elements.remoteVideo.srcObject = localStream;
-    elements.remoteVideo.muted = true;
-    elements.remoteVideo.classList.remove('hidden');
+    attachLocalStream(localStream);
     elements.videoPlaceholder.classList.add('hidden');
     elements.liveOverlay.classList.remove('hidden');
     elements.liveOverlay.classList.add('flex');
@@ -319,6 +682,9 @@ async function toggleScreenSharing() {
 
     const audioTrack = localStream.getAudioTracks()[0];
     if (audioTrack) {
+      console.log('[audio] faixa capturada: ' + systemAudioLabel(audioTrack) +
+        ' | sistema=' + getSystemAudioTracks(localStream).length +
+        ' | estado=' + audioTrack.readyState);
       setupAudioMeter(localStream);
     }
     // Sincroniza botao, badge e icone com as tracks REAIS da stream.
@@ -326,15 +692,23 @@ async function toggleScreenSharing() {
 
     elements.iconToggleShare.setAttribute('data-lucide', 'square');
     elements.textToggleShare.textContent = 'Interromper Transmissao';
+    elements.btnChangeSource.classList.remove('hidden');
+    elements.btnChangeSource.classList.add('flex');
     elements.btnToggleShare.classList.replace('bg-brand-600', 'bg-red-600');
     elements.btnToggleShare.classList.replace('hover:bg-brand-500', 'hover:bg-red-500');
 
     updateStatus('sharing', 'Transmitindo Ao Vivo');
     showToast('Transmissao iniciada em ' + modeLabel + '!');
 
-    activeDataConns.forEach((dataConn, viewerPeerId) => {
-      peer.call(viewerPeerId, localStream);
-    });
+    ensureSystemAudioTrackReady(localStream, 'transmissao inicial');
+    if (isHost) {
+      activeDataConns.forEach((dataConn, viewerPeerId) => {
+        peer.call(viewerPeerId, localStream);
+      });
+    } else if (roomHostPeerId) {
+      activeCall = peer.call(roomHostPeerId, localStream);
+    }
+    setTimeout(() => auditConnectionAudio('espectadores conectados'), 1500);
 
     setTimeout(() => {
       applyDynamicWebRTCBitrate(qualityConfig.bitrateBps);
@@ -352,14 +726,106 @@ async function toggleScreenSharing() {
   }
 }
 
+/** Troca apenas a fonte de video e preserva a transmissao atual. */
+async function switchScreenSource() {
+  if (!isHost || !isSharing || !localStream) return;
+
+  const oldStream = localStream;
+  const reusedAudioTrack = oldStream.getAudioTracks()[0];
+  const Utils = window.StreamP2P ? window.StreamP2P.Utils : null;
+  const withTimeout = Utils
+    ? Utils.withTimeout
+    : (p, ms, label) => Promise.race([
+        p,
+        new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout: ' + label)), ms))
+      ]);
+  const stopAllTracks = Utils
+    ? Utils.stopAllTracks
+    : (s) => s && s.getTracks && s.getTracks().forEach((t) => t.stop());
+
+  elements.btnChangeSource.disabled = true;
+  updateStatus('connecting', 'Preparando nova fonte...');
+
+  try {
+    const nextStream = await captureElectronScreen({
+      withTimeout,
+      stopAllTracks
+    }, { reuseAudioTrack: reusedAudioTrack });
+
+    if (!nextStream) {
+      updateStatus('sharing', 'Transmitindo Ao Vivo');
+      return;
+    }
+
+    const nextVideoTrack = nextStream.getVideoTracks()[0];
+    if (!nextVideoTrack) {
+      stopAllTracks(nextStream);
+      throw new Error('A nova fonte nao forneceu video');
+    }
+
+    const replacements = [];
+    Object.values(peer.connections || {}).forEach((connectionList) => {
+      (connectionList || []).forEach((conn) => {
+        const pc = conn && conn.peerConnection;
+        if (!pc) return;
+        pc.getSenders().forEach((sender) => {
+          if (sender.track && sender.track.kind === 'video') {
+            replacements.push(sender.replaceTrack(nextVideoTrack));
+          }
+        });
+      });
+    });
+    await Promise.all(replacements);
+
+    nextVideoTrack.onended = () => {
+      console.log('Compartilhamento interrompido via barra nativa.');
+      stopScreenSharing();
+    };
+    applyContentHint(qualityConfig.contentHint);
+
+    localStream = nextStream;
+    attachLocalStream(nextStream);
+    ensureSystemAudioTrackReady(nextStream, 'troca de fonte');
+    applyAudioTrackState(Boolean(nextStream.getAudioTracks()[0]));
+
+    oldStream.getTracks().forEach((track) => {
+      if (!nextStream.getTracks().includes(track)) {
+        try { track.stop(); } catch (e) { /* ignora */ }
+      }
+    });
+
+    const settings = nextVideoTrack.getSettings();
+    elements.qualityStats.textContent =
+      (window.StreamP2P
+        ? window.StreamP2P.Quality.labelFor(currentMode)
+        : currentMode) + ': ' + (settings.height || qualityConfig.height) +
+      'p @ ' + Math.round(settings.frameRate || qualityConfig.fps) + 'FPS';
+    updateStatus('sharing', 'Transmitindo Ao Vivo');
+    showToast('Fonte de transmissão alterada sem interromper a sala.');
+    auditConnectionAudio('apos troca de fonte');
+  } catch (err) {
+    console.error('Erro ao trocar fonte:', err);
+    updateStatus('sharing', 'Transmitindo Ao Vivo');
+    showToast('Nao foi possivel trocar a fonte: ' + err.message);
+  } finally {
+    elements.btnChangeSource.disabled = false;
+    refreshIcons();
+  }
+}
+
 /**
  * Seletor de fontes + captura de audio com exclusao de processo.
  */
-function captureElectronScreen(utils) {
+function captureElectronScreen(utils, options) {
   return new Promise(async (resolve) => {
     const withTimeout = utils.withTimeout;
     const stopAllTracks = utils.stopAllTracks;
+    const reusedAudioTrack = options && options.reuseAudioTrack &&
+      options.reuseAudioTrack.readyState === 'live'
+      ? options.reuseAudioTrack
+      : null;
     let screenVideoStream = null;
+    let screenAudioStream = null;
     let settled = false;
 
     const finish = (value) => {
@@ -426,7 +892,15 @@ function captureElectronScreen(utils) {
             const audioMode = elements.selectAudioSourceApp
               ? elements.selectAudioSourceApp.value
               : 'native';
-            const audioPlan = await resolveAudioStrategy(audioMode);
+            const audioPlan = reusedAudioTrack
+              ? {
+                  useNative: true,
+                  track: reusedAudioTrack,
+                  filtered: audioStrategy.filtered,
+                  excludedPids: audioStrategy.excludedPids,
+                  warning: audioStrategy.modeWarning
+                }
+              : await resolveAudioStrategy(audioMode);
 
             const videoConstraints = {
               mandatory: {
@@ -455,36 +929,27 @@ function captureElectronScreen(utils) {
                 stopAllTracks
               );
             } else {
-              // Audio e video juntos, ambos amarrados ao mesmo sourceId.
-              try {
-                screenVideoStream = await withTimeout(
-                  navigator.mediaDevices.getUserMedia({
-                    audio: {
-                      mandatory: {
-                        chromeMediaSource: 'desktop',
-                        chromeMediaSourceId: src.id
-                      }
-                    },
-                    video: videoConstraints
-                  }),
-                  10000,
-                  'video+audio da fonte',
-                  stopAllTracks
-                );
-              } catch (withAudioErr) {
-                // Sem audio e melhor do que derrubar o renderer.
-                console.warn('[audio] captura com audio falhou, indo so video:',
-                  withAudioErr);
-                showToast('Audio indisponivel para esta fonte; seguindo com video.');
-                screenVideoStream = await withTimeout(
-                  navigator.mediaDevices.getUserMedia({
-                    audio: false,
-                    video: videoConstraints
-                  }),
-                  10000,
-                  'video da fonte',
-                  stopAllTracks
-                );
+              // O VIDEO fica amarrado a fonte escolhida (janela ou tela).
+              // O AUDIO e procurado a parte e medido: amarrar audio ao id de
+              // uma JANELA costuma devolver faixa muda, porque o Chromium nao
+              // isola audio por janela. Com audio na tela vem o loopback
+              // global, que e o que o usuario espera.
+              screenVideoStream = await withTimeout(
+                navigator.mediaDevices.getUserMedia({
+                  audio: false,
+                  video: videoConstraints
+                }),
+                10000,
+                'video da fonte',
+                stopAllTracks
+              );
+
+              const found = await captureSystemAudioForSource(
+                src, sources, withTimeout, stopAllTracks
+              );
+              if (found) {
+                screenAudioStream = new MediaStream();
+                screenAudioStream.addTrack(found.track);
               }
             }
 
@@ -494,29 +959,32 @@ function captureElectronScreen(utils) {
 
             if (audioPlan.useNative && audioPlan.track) {
               finalStream.addTrack(audioPlan.track);
-              showToast('Audio capturado com o Discord EXCLUIDO (' +
-                (audioPlan.excludedPids || []).length + ' PID).');
-            } else {
-              const audioTrack = finalStream.getAudioTracks()[0];
-              if (audioTrack) {
-                const s = audioTrack.getSettings();
-                console.log('[audio] origem=' + audioTrack.label +
-                  ' deviceId=' + s.deviceId + ' canais=' + s.channelCount);
-                showToast(
-                  'Audio do sistema capturado (loopback do dispositivo de ' +
-                  'saida padrao). Para isolar o Discord, compile o addon ' +
-                  'nativo. Se um app tocar em outro dispositivo de saida, ' +
-                  'reinicie o compartilhamento.'
-                );
+              if (audioPlan.filtered) {
+                showToast('Áudio capturado com o Discord EXCLUÍDO (' +
+                  (audioPlan.excludedPids || []).length + ' PID).');
               } else {
-                showToast('Video sem audio.');
+                showToast(audioPlan.warning ||
+                  'Áudio do sistema capturado sem o filtro do Discord.');
               }
+            } else if (screenAudioStream) {
+              finalStream.addTrack(screenAudioStream.getAudioTracks()[0]);
+              const s = screenAudioStream.getAudioTracks()[0].getSettings();
+              console.log('[audio] origem=' +
+                screenAudioStream.getAudioTracks()[0].label +
+                ' deviceId=' + s.deviceId + ' canais=' + s.channelCount);
+              showToast('Áudio do sistema capturado via loopback (' +
+                'dispositivo de saída padrão). Se um app tocar em outro ' +
+                'dispositivo, reinicie o compartilhamento.');
+            } else {
+              showToast('Vídeo sem áudio: nenhuma via de captura devolveu ' +
+                'sinal. Tocar som antes de iniciar pode ajudar.');
             }
 
             return finish(finalStream);
           } catch (err) {
             console.error('Erro ao capturar fonte:', err);
             stopAllTracks(screenVideoStream);
+            stopAllTracks(screenAudioStream);
             showToast('Erro ao iniciar captura da fonte selecionada.');
             return finish(null);
           }
@@ -556,7 +1024,6 @@ function stopScreenSharing() {
   teardownAudioMeter();
   isAudioMuted = false;
   currentSourceId = null;
-  // Libera o botao para a proxima transmissao poder tentar audio de novo.
   applyAudioTrackState(false);
 
   if (localStream) {
@@ -565,30 +1032,24 @@ function stopScreenSharing() {
     });
     localStream = null;
   }
-
-  if (micStream) {
-    micStream.getTracks().forEach((track) => track.stop());
-    micStream = null;
-    isMicActive = false;
-  }
+  removeLocalStream();
 
   if (window.NativeAudioBridge) {
     window.NativeAudioBridge.stop().catch(() => {});
   }
 
   isSharing = false;
-  elements.remoteVideo.srcObject = null;
-  elements.remoteVideo.classList.add('hidden');
-  elements.videoPlaceholder.classList.remove('hidden');
-  elements.liveOverlay.classList.add('hidden');
-  elements.liveOverlay.classList.remove('flex');
 
   activeDataConns.forEach((dataConn) => {
     try { dataConn.send({ type: 'stream-stopped' }); } catch (e) { /* ignora */ }
   });
 
   elements.iconToggleShare.setAttribute('data-lucide', 'screen-share');
-  elements.textToggleShare.textContent = 'Iniciar Compartilhamento';
+  elements.textToggleShare.textContent = isHost
+    ? 'Iniciar Compartilhamento'
+    : 'Compartilhar Minha Tela';
+  elements.btnChangeSource.classList.add('hidden');
+  elements.btnChangeSource.classList.remove('flex');
   elements.btnToggleShare.classList.replace('bg-red-600', 'bg-brand-600');
   elements.btnToggleShare.classList.replace('hover:bg-red-500', 'hover:bg-brand-500');
 
@@ -633,7 +1094,11 @@ async function recaptureSystemAudio() {
           chromeMediaSourceId: currentSourceId,
           echoCancellation: false,
           noiseSuppression: false,
-          autoGainControl: false
+          autoGainControl: false,
+          googEchoCancellation: false,
+          googAutoGainControl: false,
+          googNoiseSuppression: false,
+          googHighpassFilter: false
         }
       },
       video: {
@@ -649,8 +1114,9 @@ async function recaptureSystemAudio() {
 
     const track = temp.getAudioTracks()[0];
     if (track) {
-      // A faixa de video era so um placebo para Satisfazer o Chromium.
+      // A faixa de video era so um placebo para satisfazer o Chromium.
       temp.getVideoTracks().forEach((t) => t.stop());
+      await hardenSystemAudioTrack(track);
       const s = track.getSettings();
       console.log('[audio] re-capturado: label="' + track.label +
         '" deviceId=' + s.deviceId + ' canais=' + s.channelCount);
@@ -667,12 +1133,21 @@ async function recaptureSystemAudio() {
   try {
     const temp = await navigator.mediaDevices.getDisplayMedia({
       video: true,
-      audio: true
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        googEchoCancellation: false,
+        googAutoGainControl: false,
+        googNoiseSuppression: false,
+        googHighpassFilter: false
+      }
     });
 
     const track = temp.getAudioTracks()[0];
     if (track) {
       temp.getVideoTracks().forEach((t) => t.stop());
+      await hardenSystemAudioTrack(track);
       console.warn('[audio] re-captura via getDisplayMedia (mono, com ' +
         'processamento automatico).');
       return track;
@@ -688,10 +1163,11 @@ async function recaptureSystemAudio() {
 async function toggleAudioTrack() {
   if (!isHost || !localStream) return;
 
-  let audioTracks = localStream.getAudioTracks();
+  // O botao controla somente as faixas do audio do sistema.
+  let systemTracks = getSystemAudioTracks(localStream);
 
   // Sem faixa de audio: tenta recuperar antes de desistir.
-  if (audioTracks.length === 0) {
+  if (systemTracks.length === 0) {
     updateStatus('connecting', 'Recuperando audio do sistema...');
     elements.btnToggleAudio.disabled = true;
 
@@ -699,7 +1175,8 @@ async function toggleAudioTrack() {
 
     if (recovered) {
       localStream.addTrack(recovered);
-      audioTracks = localStream.getAudioTracks();
+      await hardenSystemAudioTrack(recovered);
+      systemTracks = getSystemAudioTracks(localStream);
 
       const pushed = await replaceAudioTrackOnSenders(recovered);
 
@@ -727,7 +1204,10 @@ async function toggleAudioTrack() {
   }
 
   isAudioMuted = !isAudioMuted;
-  audioTracks[0].enabled = !isAudioMuted;
+  systemTracks.forEach((t) => { t.enabled = !isAudioMuted; });
+
+  console.log('[audio] mute do sistema = ' + isAudioMuted +
+    ' em ' + systemTracks.length + ' faixa(s)');
 
   if (isAudioMuted) {
     elements.iconToggleAudio.setAttribute('data-lucide', 'volume-x');
@@ -761,45 +1241,6 @@ function toggleViewerAudioMute() {
     elements.iconToggleAudio.className = 'w-4 h-4 text-emerald-400';
     elements.textToggleAudio.textContent = 'Audio Ativo';
     showToast('Audio da transmissao ativado.');
-  }
-  refreshIcons();
-}
-
-async function toggleMicrophoneCapture() {
-  if (!isHost) return;
-
-  if (isMicActive) {
-    if (micStream) {
-      micStream.getTracks().forEach((t) => t.stop());
-      micStream = null;
-    }
-    isMicActive = false;
-    elements.iconToggleMic.setAttribute('data-lucide', 'mic-off');
-    elements.iconToggleMic.className = 'w-4 h-4 text-gray-400';
-    elements.textToggleMic.textContent = 'Microfone Desativado';
-    showToast('Microfone da transmissao desativado.');
-  } else {
-    try {
-      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const micTrack = micStream.getAudioTracks()[0];
-
-      if (localStream) {
-        localStream.addTrack(micTrack);
-        // O espectador precisa receber a nova track sem reconectar.
-        replaceAudioTrackOnSenders(micTrack).then((n) => {
-          if (n > 0) console.log('replaceTrack de microfone em', n, 'sender(s)');
-        });
-      }
-
-      isMicActive = true;
-      elements.iconToggleMic.setAttribute('data-lucide', 'mic');
-      elements.iconToggleMic.className = 'w-4 h-4 text-emerald-400';
-      elements.textToggleMic.textContent = 'Microfone Ativo';
-      showToast('Microfone adicionado a transmissao!');
-    } catch (err) {
-      console.error('Erro ao acessar microfone:', err);
-      showToast('Permissao de microfone negada ou indisponivel.');
-    }
   }
   refreshIcons();
 }

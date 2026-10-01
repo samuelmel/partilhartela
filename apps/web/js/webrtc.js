@@ -15,6 +15,7 @@ function setupPeerJS(targetRoomId) {
   const hostPeerId = Signaling
     ? Signaling.buildHostPeerId(targetRoomId)
     : 'streamp2p-room-' + targetRoomId;
+  roomHostPeerId = hostPeerId;
   const peerConfig = Signaling
     ? Signaling.PEER_CONFIG
     : { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }], debug: 1 };
@@ -58,15 +59,17 @@ function setupPeerJS(targetRoomId) {
   });
 
   peer.on('call', (call) => {
-    if (isSharing && localStream) {
-      call.answer(localStream);
-      setTimeout(() => applyDynamicWebRTCBitrate(qualityConfig.bitrateBps), 500);
-    }
+    call.answer(isSharing && localStream ? localStream : undefined);
+    call.on('stream', (incomingStream) => {
+      relayPublishedStream(incomingStream, call.peer);
+    });
+    setTimeout(() => applyDynamicWebRTCBitrate(qualityConfig.bitrateBps), 500);
   });
 }
 
 function setupAsViewer(targetRoomId, hostPeerId) {
   isHost = false;
+  roomHostPeerId = hostPeerId;
 
   const Signaling = window.StreamP2P ? window.StreamP2P.Signaling : null;
   const peerConfig = Signaling
@@ -103,7 +106,7 @@ function setupAsViewer(targetRoomId, hostPeerId) {
   peer.on('call', (call) => {
     activeCall = call;
     call.answer();
-    call.on('stream', (incomingStream) => attachRemoteStream(incomingStream));
+    call.on('stream', (incomingStream) => attachRemoteStream(incomingStream, call.peer));
     call.on('close', () => showViewerWaitingState('Transmissao encerrada.'));
     call.on('error', (err) => {
       console.error('Erro na chamada WebRTC:', err);
@@ -114,6 +117,17 @@ function setupAsViewer(targetRoomId, hostPeerId) {
   peer.on('error', (err) => {
     console.error('Erro no receptor:', err);
     updateStatus('error', 'Erro: ' + err.type);
+  });
+}
+
+/** Distribui a tela publicada por um participante aos demais participantes. */
+function relayPublishedStream(stream, publisherPeerId) {
+  if (!isSharing) attachRemoteStream(stream, publisherPeerId);
+  activeDataConns.forEach((dataConn, participantPeerId) => {
+    if (participantPeerId === publisherPeerId) return;
+    try { peer.call(participantPeerId, stream); } catch (err) {
+      console.error('Erro ao retransmitir stream publicada:', err);
+    }
   });
 }
 
@@ -188,9 +202,7 @@ async function toggleScreenSharing() {
       applyContentHint(qualityConfig.contentHint);
     }
 
-    elements.remoteVideo.srcObject = localStream;
-    elements.remoteVideo.muted = true;
-    elements.remoteVideo.classList.remove('hidden');
+    attachLocalStream(localStream);
     elements.videoPlaceholder.classList.add('hidden');
     elements.liveOverlay.classList.remove('hidden');
     elements.liveOverlay.classList.add('flex');
@@ -226,9 +238,13 @@ async function toggleScreenSharing() {
 
     updateStatus('sharing', 'Transmitindo Ao Vivo');
 
-    activeDataConns.forEach((dataConn, viewerPeerId) => {
-      peer.call(viewerPeerId, localStream);
-    });
+    if (isHost) {
+      activeDataConns.forEach((dataConn, viewerPeerId) => {
+        peer.call(viewerPeerId, localStream);
+      });
+    } else if (roomHostPeerId) {
+      activeCall = peer.call(roomHostPeerId, localStream);
+    }
 
     setTimeout(() => {
       applyDynamicWebRTCBitrate(qualityConfig.bitrateBps);
@@ -253,6 +269,7 @@ function stopScreenSharing() {
     localStream.getTracks().forEach((t) => t.stop());
     localStream = null;
   }
+  removeLocalStream();
   if (micStream) {
     micStream.getTracks().forEach((t) => t.stop());
     micStream = null;
@@ -260,18 +277,15 @@ function stopScreenSharing() {
   }
 
   isSharing = false;
-  elements.remoteVideo.srcObject = null;
-  elements.remoteVideo.classList.add('hidden');
-  elements.videoPlaceholder.classList.remove('hidden');
-  elements.liveOverlay.classList.add('hidden');
-  elements.liveOverlay.classList.remove('flex');
 
   activeDataConns.forEach((dataConn) => {
     try { dataConn.send({ type: 'stream-stopped' }); } catch (e) { /* ignora */ }
   });
 
   elements.iconToggleShare.setAttribute('data-lucide', 'screen-share');
-  elements.textToggleShare.textContent = 'Iniciar Compartilhamento';
+  elements.textToggleShare.textContent = isHost
+    ? 'Iniciar Compartilhamento'
+    : 'Compartilhar Minha Tela';
   elements.btnToggleShare.classList.replace('bg-red-600', 'bg-brand-600');
   elements.btnToggleShare.classList.replace('hover:bg-red-500', 'hover:bg-brand-500');
 
