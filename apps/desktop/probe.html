@@ -169,6 +169,180 @@
         });
       }
 
+      // ------------------------------------------------------------------
+      // FASE 1: MEDICAO DE SINAL DE VERDADE (RMS)
+      //
+      // Rotulo de track nao prova conteudo: `deviceId: loopback` aparece em
+      // qualquer audio de desktop. Aqui medimos o SINAL de verdade com
+      // getFloatTimeDomainData + AnalyserNode.
+      //
+      // Regra critica: nunca pedir audio isolado (video:false) - derruba o
+      // renderer. Cada medicao pede audio da fonte + video minimo.
+      // ------------------------------------------------------------------
+      window.probeSetCurrent('G) medicao de RMS por fonte');
+      log('');
+      log('=== MEDICAO DE SINAL (RMS) ===');
+
+      const AUDIBLE = 0.0005; // ~ -66 dBFS
+
+      // Tom de teste: garante um sinal conhecido no dispositivo de saida.
+      let tone = null;
+      try {
+        const ToneCtor = window.AudioContext || window.webkitAudioContext;
+        const toneCtx = new ToneCtor();
+        await toneCtx.resume();
+        const osc = toneCtx.createOscillator();
+        const gain = toneCtx.createGain();
+        osc.frequency.value = 440;
+        gain.gain.value = 0.12;
+        osc.connect(gain);
+        gain.connect(toneCtx.destination);
+        osc.start();
+        tone = { ctx: toneCtx, osc: osc };
+        log('tom de teste ligado (440Hz, ganho 0.12)');
+      } catch (err) {
+        log('nao foi possivel iniciar o tom: ' + err.message, 'fail');
+      }
+
+      /**
+       * Mede o RMS de pico de uma faixa de audio por `ms` milissegundos.
+       * O AudioContext e fechado ao final para nao vazar nos realtime.
+       */
+      async function measureRms(track, ms) {
+        const Ctor = window.AudioContext || window.webkitAudioContext;
+        const ctx = new Ctor();
+        try {
+          await ctx.resume();
+
+          const source = ctx.createMediaStreamSource(new MediaStream([track]));
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 2048;
+          source.connect(analyser);
+
+          // Ganho 0 evita eco; sem isto o no pode nao ser processado.
+          const mute = ctx.createGain();
+          mute.gain.value = 0;
+          analyser.connect(mute);
+          mute.connect(ctx.destination);
+
+          const buf = new Float32Array(analyser.fftSize);
+          let maxRms = 0;
+          const deadline = performance.now() + ms;
+
+          while (performance.now() < deadline) {
+            analyser.getFloatTimeDomainData(buf);
+            let sum = 0;
+            for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+            const rms = Math.sqrt(sum / buf.length);
+            if (rms > maxRms) maxRms = rms;
+            await new Promise((r) => setTimeout(r, 50));
+          }
+
+          try { source.disconnect(); mute.disconnect(); } catch (e) {}
+          return maxRms;
+        } finally {
+          try { await ctx.close(); } catch (e) {}
+        }
+      }
+
+      const dbfs = (rms) => (rms > 0 ? (20 * Math.log10(rms)).toFixed(1) : '-inf');
+      const candidates = [
+        ...(screen ? [screen] : []),
+        ...sources.filter((s) => !s.isScreen).slice(0, 8)
+      ];
+
+      const measurements = [];
+
+      for (const source of candidates) {
+        const label = (source.isScreen ? '[TELA] ' : '[JANELA] ') + source.name;
+        let stream = null;
+        try {
+          // audio da fonte + video minimo (nunca audio isolado)
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              mandatory: {
+                chromeMediaSource: 'desktop',
+                chromeMediaSourceId: source.id,
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false
+              }
+            },
+            video: {
+              mandatory: {
+                chromeMediaSource: 'desktop',
+                chromeMediaSourceId: source.id,
+                maxWidth: 320,
+                maxHeight: 180,
+                maxFrameRate: 5
+              }
+            }
+          });
+
+          const track = stream.getAudioTracks()[0];
+          if (!track) {
+            log('SEM FAIXA DE AUDIO  ' + label, 'skip');
+            measurements.push({
+              source: source.name, isScreen: source.isScreen,
+              hasTrack: false, rms: 0, dbfs: null, audible: false
+            });
+            continue;
+          }
+
+          const rms = await measureRms(track, 1500);
+          const settings = track.getSettings();
+          const audible = rms > AUDIBLE;
+
+          log((audible ? 'COM SOM  ' : 'SILENCIO ') +
+            label + '  rms=' + rms.toFixed(5) + ' (' + dbfs(rms) + ' dBFS)',
+            audible ? 'ok' : 'skip');
+
+          measurements.push({
+            source: source.name,
+            isScreen: source.isScreen,
+            hasTrack: true,
+            rms: Number(rms.toFixed(6)),
+            dbfs: dbfs(rms),
+            audible,
+            deviceId: settings.deviceId,
+            channels: settings.channelCount
+          });
+        } catch (err) {
+          log('FALHOU ' + label + ' -> ' + err.name + ': ' + err.message, 'fail');
+          measurements.push({
+            source: source.name, isScreen: source.isScreen,
+            error: err.name + ': ' + err.message
+          });
+        } finally {
+          if (stream) stopAll(stream);
+        }
+      }
+
+      if (tone) {
+        try { tone.osc.stop(); } catch (e) {}
+        try { await tone.ctx.close(); } catch (e) {}
+      }
+
+      // Baseline: se a tela nao enxerga o tom, todos os zeros sao
+      // inconclusivos (pode ser o tom, nao a fonte).
+      const screenMeasurement = measurements.find((m) => m.isScreen);
+      const baselineOk = Boolean(screenMeasurement && screenMeasurement.audible);
+
+      log('');
+      log('RESULTADO: ' + measurements.length + ' fonte(s) medida(s)');
+      log('com som   : ' + measurements.filter((m) => m.audible).length);
+      log('silenciosas: ' +
+        measurements.filter((m) => m.hasTrack && !m.audible).length);
+      log('sem faixa : ' + measurements.filter((m) => !m.hasTrack).length);
+      log('baseline (tela enxerga o tom): ' + (baselineOk ? 'SIM' : 'NAO'));
+      if (!baselineOk) {
+        log('ATENCAO: sem baseline valido os zeros nao sao conclusivos.',
+          'fail');
+      }
+
+      window.probeAPI.report({ type: 'MEASUREMENTS', data: measurements });
+      window.probeAPI.report({ type: 'BASELINE', ok: baselineOk });
+
       log('');
       log('=== Todos os testes concluidos sem derrubar o renderer ===', 'ok');
       window.probeAPI.report({ type: 'DONE' });

@@ -108,7 +108,7 @@ app.whenReady().then(() => {
     setTimeout(() => {
       record({ type: 'TIMEOUT', test: currentTest });
       flush(3);
-    }, 45000);
+    }, 150000);
   });
 
   win.loadFile(path.join(__dirname, 'probe.html'));
