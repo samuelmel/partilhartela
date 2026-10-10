@@ -1,0 +1,25 @@
+{
+  "name": "partilhartela",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Compartilhamento de tela ao vivo para desktop com Electron, React e LiveKit",
+  "workspaces": [
+    "apps/server",
+    "apps/desktop"
+  ],
+  "scripts": {
+    "dev": "npm run dev:desktop",
+    "dev:server": "npm --workspace apps/server run dev",
+    "dev:desktop": "concurrently \"npm:dev:server\" \"npm --workspace apps/desktop run dev\"",
+    "build": "npm run build:server && npm run build:desktop",
+    "build:server": "npm --workspace apps/server run build",
+    "build:desktop": "npm --workspace apps/desktop run build",
+    "dist": "npm --workspace apps/desktop run dist",
+    "typecheck": "npm run typecheck:server && npm run typecheck:desktop",
+    "typecheck:server": "npm --workspace apps/server run typecheck",
+    "typecheck:desktop": "npm --workspace apps/desktop run typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
