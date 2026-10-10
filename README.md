@@ -59,7 +59,7 @@ O primeiro botão cria uma sala e o apresentador recebe um código de seis carac
 
 1. Suba o LiveKit e a API conforme a etapa 1.
 2. Execute `npm run dev:desktop`.
-3. Crie uma sala, selecione uma tela ou janela e clique na miniatura. Se desejar, marque **Áudio do sistema** (no Windows, o Chromium utiliza a captura loopback da fonte).
+3. Crie uma sala, selecione uma tela ou janela e clique na miniatura. Em **Áudio**, use **Áudio da janela escolhida (Windows)** para capturar somente o processo da janela selecionada, sem trazer o áudio do Discord ou do próprio PartilharTela. **Áudio de todo o sistema** continua disponível como fallback, mas captura todos os sons do Windows.
 4. Abra uma segunda instância executando novamente `npm run dev:desktop` em outro terminal, ou execute o instalador gerado em paralelo.
 5. Informe o código na segunda instância e confirme que o vídeo aparece. Teste trocar a fonte e alterar 720p30/1080p30/1080p60 sem desconectar a sala.
 6. Para testar o erro de sala, use um código aleatório que não foi criado: a API responde “Sala inexistente ou expirada”.
@@ -67,11 +67,18 @@ O primeiro botão cria uma sala e o apresentador recebe um código de seis carac
 ## Performance e qualidade
 
 - `backgroundThrottling: false`, aceleração de GPU e rasterização GPU são configurados na janela Electron.
-- O LiveKit usa `adaptiveStream`, `dynacast` e simulcast na tela compartilhada, com camadas auxiliares de 360p/720p para espectadores com menor banda.
+- O LiveKit usa `adaptiveStream` e `dynacast`; camadas simulcast na tela estão desativadas por estabilidade do H.264 no Electron.
+- Para evitar quadros pretos observados em algumas combinações Electron/Chromium com H.264, a publicação atual da tela usa simulcast desativado.
 - As opções limitam a captura a 1280x720@30, 1920x1080@30 ou 1920x1080@60, com bitrates-alvo de 4/8/12 Mbps; o bitrate efetivo depende da estimativa de banda do WebRTC.
 - O codec publicado é preferencialmente H.264; a negociação WebRTC pode cair para VP8/VP9 conforme o hardware e o navegador remoto.
 - O seletor **Movimento / jogos** define `contentHint = "motion"` e `degradationPreference = "maintain-framerate"`. Para texto e código, **Texto / código** usa `detail` e preserva a resolução.
 - Reconexão e retomada de publicação são oferecidas pela camada LiveKit; se a sessão não puder ser recuperada, o app informa claramente que a conexão foi perdida.
+
+### Áudio por aplicativo no Windows
+
+O modo **Áudio da janela escolhida (Windows)** usa o pacote `loopback-capture`, baseado em WASAPI Process Loopback, e converte o PCM recebido em uma faixa WebRTC por `AudioWorklet`. Ele exige Windows 10 x64 ou superior e uma janela cujo PID possa ser associado pelo sistema. A captura de uma tela inteira não possui um processo único; nesse caso use o modo de áudio do sistema ou selecione a janela do aplicativo.
+
+O modo **Sistema, exceto um processo (Windows)** usa `start(processId, false, ...)`: no Windows, `false` ativa a exclusão da árvore do processo indicado. A tela de configuração lista as janelas detectadas para você escolher o processo (Discord, navegador ou outro); o modo por aplicativo continua sendo a opção mais isolada.
 
 ## Build e instalador Windows
 
