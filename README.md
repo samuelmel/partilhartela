@@ -67,8 +67,8 @@ O primeiro botão cria uma sala e o apresentador recebe um código de seis carac
 ## Performance e qualidade
 
 - `backgroundThrottling: false`, aceleração de GPU e rasterização GPU são configurados na janela Electron.
-- O LiveKit usa `adaptiveStream` e `dynacast`; simulcast fica desativado para o compartilhamento de alta qualidade.
-- As opções limitam a captura a 1280x720@30, 1920x1080@30 ou 1920x1080@60, com bitrates de 2,5/5/8 Mbps.
+- O LiveKit usa `adaptiveStream`, `dynacast` e simulcast na tela compartilhada, com camadas auxiliares de 360p/720p para espectadores com menor banda.
+- As opções limitam a captura a 1280x720@30, 1920x1080@30 ou 1920x1080@60, com bitrates-alvo de 4/8/12 Mbps; o bitrate efetivo depende da estimativa de banda do WebRTC.
 - O codec publicado é preferencialmente H.264; a negociação WebRTC pode cair para VP8/VP9 conforme o hardware e o navegador remoto.
 - O seletor **Movimento / jogos** define `contentHint = "motion"` e `degradationPreference = "maintain-framerate"`. Para texto e código, **Texto / código** usa `detail` e preserva a resolução.
 - Reconexão e retomada de publicação são oferecidas pela camada LiveKit; se a sessão não puder ser recuperada, o app informa claramente que a conexão foi perdida.
@@ -112,4 +112,4 @@ infra/          Docker Compose e configuração LiveKit
 - Vários apresentadores e transferência de controle.
 - Gravação da transmissão e replay.
 - Senha opcional por sala, persistência de salas e autenticação.
-- Métricas detalhadas de WebRTC (RTT, resolução, FPS e bitrate) em painel de diagnóstico.
+- Métricas WebRTC medidas no overlay (RTT, resolução, FPS, bitrate e encoder reportado pelo navegador).
