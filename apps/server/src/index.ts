@@ -6,7 +6,7 @@ import { customAlphabet } from 'nanoid';
 import { AccessToken } from 'livekit-server-sdk';
 
 const app = Fastify({ logger: true });
-const port = Number(process.env.SERVER_PORT ?? 8787);
+const port = Number(process.env.PORT ?? process.env.SERVER_PORT ?? 8787);
 const livekitUrl = process.env.LIVEKIT_URL ?? 'ws://localhost:7880';
 const apiKey = process.env.LIVEKIT_API_KEY ?? 'devkey';
 const apiSecret = process.env.LIVEKIT_API_SECRET ?? 'secret';
