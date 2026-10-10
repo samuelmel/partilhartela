@@ -14,6 +14,14 @@ import './styles.css';
 
 const tokenServer = import.meta.env.VITE_TOKEN_SERVER_URL ?? 'http://localhost:8787';
 type Quality = '720p30' | '1080p30' | '1080p60';
+type MediaStats = {
+  rttMs?: number;
+  fps?: number;
+  bitrateKbps?: number;
+  resolution?: string;
+  encoder?: string;
+  packetLoss?: number;
+};
 const qualities: Record<Quality, { width: number; height: number; fps: number; bitrate: number }> = {
   '720p30': { width: 1280, height: 720, fps: 30, bitrate: 4_000_000 },
   '1080p30': { width: 1920, height: 1080, fps: 30, bitrate: 8_000_000 },
@@ -51,11 +59,14 @@ function App(): React.JSX.Element {
   const [loadingSources, setLoadingSources] = useState(false);
   const [viewerCount, setViewerCount] = useState(0);
   const [remoteTracks, setRemoteTracks] = useState<Array<{ id: string; identity: string; track: RemoteVideoTrack }>>([]);
+  const [mediaStats, setMediaStats] = useState<MediaStats>({});
+  const [connectionState, setConnectionState] = useState('Conectado');
   const roomRef = useRef<Room>();
   const localPreviewRef = useRef<HTMLVideoElement>(null);
   const localVideoRef = useRef<LocalVideoTrack>();
   const localAudioRef = useRef<LocalAudioTrack>();
   const publishingRef = useRef(false);
+  const statsSnapshotRef = useRef<{ bytes: number; time: number }>();
 
   useEffect(() => () => { roomRef.current?.disconnect(); }, []);
 
@@ -78,8 +89,11 @@ function App(): React.JSX.Element {
       adaptiveStream: true,
       dynacast: true,
       videoCaptureDefaults: { resolution: VideoPresets.h1080.resolution, facingMode: 'user' },
-      publishDefaults: { simulcast: false, videoCodec: 'h264' }
+      publishDefaults: { simulcast: true, videoCodec: 'h264' }
     });
+    const statsTimer = window.setInterval(() => {
+      void collectStats(room).catch((reason) => console.warn('[PartilharTela] Não foi possível ler estatísticas WebRTC:', reason));
+    }, 2000);
     room.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
       if (track.kind === Track.Kind.Video && track instanceof RemoteVideoTrack) {
         setRemoteTracks((current) => [...current.filter((item) => item.id !== track.sid), {
@@ -95,7 +109,13 @@ function App(): React.JSX.Element {
     });
     room.on(RoomEvent.ParticipantConnected, () => setViewerCount(room.remoteParticipants.size));
     room.on(RoomEvent.ParticipantDisconnected, () => setViewerCount(room.remoteParticipants.size));
-    room.on(RoomEvent.Disconnected, () => { if (screen !== 'home') setError('A conexão foi perdida. Tente entrar novamente.'); });
+    room.on(RoomEvent.Reconnecting, () => setConnectionState('Reconectando...'));
+    room.on(RoomEvent.Reconnected, () => setConnectionState('Conectado'));
+    room.on(RoomEvent.Disconnected, () => {
+      window.clearInterval(statsTimer);
+      setConnectionState('Desconectado');
+      if (screen !== 'home') setError('A conexão foi perdida. Tente entrar novamente.');
+    });
     try {
       await room.connect(roomInfo.livekitUrl, roomInfo.token, { autoSubscribe: true });
     } catch {
@@ -203,8 +223,9 @@ function App(): React.JSX.Element {
       if (localPreviewRef.current) videoTrack.attach(localPreviewRef.current);
       await room.localParticipant.publishTrack(videoTrack, {
         source: Track.Source.ScreenShare,
-        simulcast: false,
+        simulcast: true,
         videoEncoding: { maxBitrate: settings.bitrate, maxFramerate: settings.fps },
+        screenShareSimulcastLayers: qualityOverride === '720p30' ? [VideoPresets.h360] : [VideoPresets.h360, VideoPresets.h720],
         degradationPreference: motion ? 'maintain-framerate' : 'maintain-resolution'
       });
       console.info('[PartilharTela] Tela publicada no LiveKit.');
@@ -257,6 +278,34 @@ function App(): React.JSX.Element {
     } catch {
       setError('Não foi possível copiar o código. Selecione e copie manualmente: ' + roomCode);
     }
+
+  }
+
+  async function collectStats(room: Room): Promise<void> {
+    const publisherReport = room.engine.pcManager?.publisher.getStats();
+    const subscriberReport = room.engine.pcManager?.subscriber?.getStats();
+    const reports = [publisherReport, subscriberReport].filter((report): report is Promise<RTCStatsReport> => Boolean(report));
+    const snapshots = await Promise.all(reports);
+    const values = snapshots.flatMap((report) => Array.from(report.values()));
+    const outbound = values.find((item) => item.type === 'outbound-rtp' && item.kind === 'video');
+    const inbound = values.find((item) => item.type === 'inbound-rtp' && item.kind === 'video');
+    const candidate = values.find((item) => item.type === 'candidate-pair' && item.state === 'succeeded');
+    const codec = values.find((item) => item.type === 'codec' && item.mimeType?.toLowerCase().startsWith('video/'));
+    const previous = statsSnapshotRef.current;
+    const now = performance.now();
+    const bytes = typeof outbound?.bytesSent === 'number' ? outbound.bytesSent : inbound?.bytesReceived;
+    const elapsed = previous && bytes !== undefined ? (now - previous.time) / 1000 : 0;
+    setMediaStats({
+      rttMs: typeof candidate?.currentRoundTripTime === 'number' ? Math.round(candidate.currentRoundTripTime * 1000) : undefined,
+      fps: typeof inbound?.framesPerSecond === 'number' ? Math.round(inbound.framesPerSecond) : typeof outbound?.framesPerSecond === 'number' ? Math.round(outbound.framesPerSecond) : undefined,
+      bitrateKbps: elapsed > 0 && previous?.bytes !== undefined && bytes !== undefined ? Math.round(((bytes - previous.bytes) * 8) / elapsed / 1000) : undefined,
+      resolution: typeof inbound?.frameWidth === 'number' ? `${inbound.frameWidth}x${inbound.frameHeight}` : typeof outbound?.frameWidth === 'number' ? `${outbound.frameWidth}x${outbound.frameHeight}` : undefined,
+      encoder: typeof outbound?.encoderImplementation === 'string'
+        ? outbound.encoderImplementation
+        : typeof codec?.mimeType === 'string' ? codec.mimeType : undefined,
+      packetLoss: typeof inbound?.packetsLost === 'number' ? inbound.packetsLost : undefined
+    });
+    if (bytes !== undefined) statsSnapshotRef.current = { bytes, time: now };
   }
 
   if (screen === 'home') return <main className="shell home"><div className="brand"><span className="brand-mark">◈</span><h1>PartilharTela</h1><p>Compartilhe sua tela ao vivo, sem complicação.</p></div><div className="actions"><button className="primary" onClick={() => void createRoom()}>Criar sala</button><button onClick={() => setScreen('join')}>Entrar na sala</button></div><FormError message={error} /></main>;
@@ -264,7 +313,7 @@ function App(): React.JSX.Element {
 
   const selectedQuality = qualities[quality];
   const canShare = screen === 'presenter' || screen === 'viewer';
-  return <main className="room"><header><div className="brand compact"><span className="brand-mark">◈</span><strong>PartilharTela</strong>{(isSharing || remoteTracks.length > 0) && <span className="live-pill">AO VIVO</span>}</div><div className="room-meta">Código da sala <strong>{roomCode}</strong><button className="small" onClick={() => void copyLink()}>Copiar código</button><span className="connection">● Conectado</span></div></header><section className="stage"><div className="tile-grid">{isSharing && <div className="video-tile local-tile"><video ref={localPreviewRef} autoPlay muted playsInline /><span>Você</span><button className="tile-fullscreen" onClick={(event) => void toggleFullscreen(event.currentTarget.parentElement!)}>Tela cheia</button></div>}{remoteTracks.map((item) => <VideoTile key={item.id} identity={item.identity} track={item.track} />)}{!isSharing && remoteTracks.length === 0 && canShare && <div className="empty-stage"><h2>{screen === 'presenter' ? 'Sala criada' : 'Você entrou na sala'}</h2><p>Compartilhe o código <strong>{roomCode}</strong> e clique em <strong>Compartilhar tela</strong> quando quiser transmitir.</p></div>}{!isSharing && remoteTracks.length === 0 && !canShare && <div className="empty-stage"><h2>Aguardando compartilhamento</h2><p>Quando alguém compartilhar a tela, ela aparecerá aqui.</p></div>}</div><div className="overlay"><span>● Conexão ativa</span><span>{isSharing || remoteTracks.length > 0 ? `${selectedQuality.width}x${selectedQuality.height} · ${selectedQuality.fps} fps` : 'Aguardando compartilhamento'}</span><span>{`${viewerCount} participante(s)`}</span></div></section>{canShare && <aside className="controls"><div className="control-row"><label>Qualidade<select value={quality} onChange={(event) => { const next = event.target.value as Quality; setQuality(next); if (isSharing) void publishScreen(selectedSource, next); }}><option value="720p30">720p · 30 fps</option><option value="1080p30">1080p · 30 fps</option><option value="1080p60">1080p · 60 fps</option></select></label><label>Conteúdo<select value={motion ? 'motion' : 'detail'} onChange={(event) => setMotion(event.target.value === 'motion')}><option value="motion">Movimento / jogos</option><option value="detail">Texto / código</option></select></label><label className="toggle"><input type="checkbox" checked={systemAudio} onChange={(event) => setSystemAudio(event.target.checked)} /> Áudio do sistema</label>{isSharing ? <><button onClick={() => void openShareDialog()}>Trocar fonte</button><button onClick={() => void stopSharing()}>Parar compartilhamento</button></> : <button className="primary" onClick={() => void openShareDialog()}>Compartilhar tela</button>}</div><FormError message={error} /></aside>}{shareDialogOpen && <div className="modal-backdrop" role="dialog" aria-modal="true"><section className="share-modal"><div className="modal-header"><div><h2>Escolha o que compartilhar</h2><p className="muted">Selecione uma tela inteira ou uma janela.</p></div><button className="close" onClick={() => setShareDialogOpen(false)}>×</button></div>{loadingSources ? <p className="muted">Carregando telas e janelas...</p> : sources.length === 0 ? <div className="empty-sources"><p>Nenhuma fonte foi encontrada.</p><button onClick={() => void refreshSources()}>Tentar novamente</button></div> : <div className="sources">{sources.map((source) => <button className={`source ${selectedSource === source.id ? 'selected' : ''}`} key={source.id} onClick={() => { setSelectedSource(source.id); void publishScreen(source.id); }}><img src={source.thumbnail} alt="" /><span>{source.name}</span></button>)}</div>}<FormError message={error} /></section></div>}</main>;
+  return <main className="room"><header><div className="brand compact"><span className="brand-mark">◈</span><strong>PartilharTela</strong>{(isSharing || remoteTracks.length > 0) && <span className="live-pill">AO VIVO</span>}</div><div className="room-meta">Código da sala <strong>{roomCode}</strong><button className="small" onClick={() => void copyLink()}>Copiar código</button><span className="connection">● {connectionState}</span></div></header><section className="stage"><div className="tile-grid">{isSharing && <div className="video-tile local-tile"><video ref={localPreviewRef} autoPlay muted playsInline /><span>Você</span><button className="tile-fullscreen" onClick={(event) => void toggleFullscreen(event.currentTarget.parentElement!)}>Tela cheia</button></div>}{remoteTracks.map((item) => <VideoTile key={item.id} identity={item.identity} track={item.track} />)}{!isSharing && remoteTracks.length === 0 && canShare && <div className="empty-stage"><h2>{screen === 'presenter' ? 'Sala criada' : 'Você entrou na sala'}</h2><p>Compartilhe o código <strong>{roomCode}</strong> e clique em <strong>Compartilhar tela</strong> quando quiser transmitir.</p></div>}{!isSharing && remoteTracks.length === 0 && !canShare && <div className="empty-stage"><h2>Aguardando compartilhamento</h2><p>Quando alguém compartilhar a tela, ela aparecerá aqui.</p></div>}</div><div className="overlay"><span>● {connectionState}</span><span>{mediaStats.resolution ?? (isSharing || remoteTracks.length > 0 ? `${selectedQuality.width}x${selectedQuality.height}` : 'Aguardando compartilhamento')} · {mediaStats.fps ? `${mediaStats.fps} fps` : 'fps --'} · {mediaStats.bitrateKbps ? `${mediaStats.bitrateKbps} kbps` : 'bitrate --'}{mediaStats.encoder ? ` · ${mediaStats.encoder}` : ''}</span><span>RTT {mediaStats.rttMs !== undefined ? `${mediaStats.rttMs} ms` : '--'} · {viewerCount} participante(s)</span></div></section>{canShare && <aside className="controls"><div className="control-row"><label>Qualidade<select value={quality} onChange={(event) => { const next = event.target.value as Quality; setQuality(next); if (isSharing) void publishScreen(selectedSource, next); }}><option value="720p30">720p · 30 fps</option><option value="1080p30">1080p · 30 fps</option><option value="1080p60">1080p · 60 fps</option></select></label><label>Conteúdo<select value={motion ? 'motion' : 'detail'} onChange={(event) => setMotion(event.target.value === 'motion')}><option value="motion">Movimento / jogos</option><option value="detail">Texto / código</option></select></label><label className="toggle"><input type="checkbox" checked={systemAudio} onChange={(event) => setSystemAudio(event.target.checked)} /> Áudio do sistema</label>{isSharing ? <><button onClick={() => void openShareDialog()}>Trocar fonte</button><button onClick={() => void stopSharing()}>Parar compartilhamento</button></> : <button className="primary" onClick={() => void openShareDialog()}>Compartilhar tela</button>}</div><FormError message={error} /></aside>}{shareDialogOpen && <div className="modal-backdrop" role="dialog" aria-modal="true"><section className="share-modal"><div className="modal-header"><div><h2>Escolha o que compartilhar</h2><p className="muted">Selecione uma tela inteira ou uma janela.</p></div><button className="close" onClick={() => setShareDialogOpen(false)}>×</button></div>{loadingSources ? <p className="muted">Carregando telas e janelas...</p> : sources.length === 0 ? <div className="empty-sources"><p>Nenhuma fonte foi encontrada.</p><button onClick={() => void refreshSources()}>Tentar novamente</button></div> : <div className="sources">{sources.map((source) => <button className={`source ${selectedSource === source.id ? 'selected' : ''}`} key={source.id} onClick={() => { setSelectedSource(source.id); void publishScreen(source.id); }}><img src={source.thumbnail} alt="" /><span>{source.name}</span></button>)}</div>}<FormError message={error} /></section></div>}</main>;
 }
 
 function VideoTile({ identity, track }: { identity: string; track: RemoteVideoTrack }): React.JSX.Element {
