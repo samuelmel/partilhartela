@@ -89,7 +89,8 @@ function App(): React.JSX.Element {
       adaptiveStream: true,
       dynacast: true,
       videoCaptureDefaults: { resolution: VideoPresets.h1080.resolution, facingMode: 'user' },
-      publishDefaults: { simulcast: true, videoCodec: 'h264' }
+      // H.264 com simulcast de tela pode gerar quadro preto em alguns Chromium/Electron.
+      publishDefaults: { simulcast: false, videoCodec: 'h264' }
     });
     const statsTimer = window.setInterval(() => {
       void collectStats(room).catch((reason) => console.warn('[PartilharTela] Não foi possível ler estatísticas WebRTC:', reason));
@@ -219,13 +220,19 @@ function App(): React.JSX.Element {
       console.info('[PartilharTela] Resolução capturada:', rawVideo.getSettings());
       const videoTrack = new LocalVideoTrack(rawVideo);
       rawVideo.contentHint = motion ? 'motion' : 'detail';
+      rawVideo.addEventListener('ended', () => {
+        setIsSharing(false);
+        localVideoRef.current = undefined;
+      }, { once: true });
       localVideoRef.current = videoTrack;
-      if (localPreviewRef.current) videoTrack.attach(localPreviewRef.current);
+      if (localPreviewRef.current) {
+        videoTrack.attach(localPreviewRef.current);
+        void localPreviewRef.current.play().catch(() => undefined);
+      }
       await room.localParticipant.publishTrack(videoTrack, {
         source: Track.Source.ScreenShare,
-        simulcast: true,
+        simulcast: false,
         videoEncoding: { maxBitrate: settings.bitrate, maxFramerate: settings.fps },
-        screenShareSimulcastLayers: qualityOverride === '720p30' ? [VideoPresets.h360] : [VideoPresets.h360, VideoPresets.h720],
         degradationPreference: motion ? 'maintain-framerate' : 'maintain-resolution'
       });
       console.info('[PartilharTela] Tela publicada no LiveKit.');
