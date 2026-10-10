@@ -97,6 +97,47 @@ O instalador NSIS `.exe` será criado em `apps\desktop\release`. O segredo `LIVE
 3. No build do desktop, defina `VITE_TOKEN_SERVER_URL` para a URL HTTPS da API. Nunca coloque a API secret no `.env` do desktop.
 4. Libere somente o endpoint de tokens pela internet, ative HTTPS, mantenha o rate limit e configure logs/monitoramento.
 
+### Versão web para espectadores
+
+O workspace `apps/web` é uma versão somente para assistir. O apresentador continua usando o aplicativo Electron, mas o espectador pode entrar pelo navegador sem instalar nada.
+
+Para testar localmente, mantenha a API em `http://localhost:8787` e execute:
+
+```powershell
+npm run dev:web
+```
+
+Abra `http://localhost:5174`, informe o código da sala e um apelido. Também é possível abrir diretamente:
+
+```text
+http://localhost:5174/?room=ABC123
+```
+
+Para publicar em um Static Site do Render:
+
+1. Crie um novo **Static Site** usando o mesmo repositório.
+2. Use a branch `master`.
+3. Deixe **Root Directory** vazio.
+4. Configure o **Build Command**:
+
+   ```text
+   npm ci && npm run build:web
+   ```
+
+5. Configure o **Publish Directory**:
+
+   ```text
+   apps/web/dist
+   ```
+
+6. Adicione a variável de ambiente:
+
+   ```text
+   VITE_TOKEN_SERVER_URL=https://partilhartela.onrender.com
+   ```
+
+Depois do deploy, o Render fornecerá um endereço como `https://partilhartela-web.onrender.com`. Compartilhe esse endereço com o código da sala, ou use o link direto `https://partilhartela-web.onrender.com/?room=ABC123`.
+
 ### LiveKit self-hosted em VPS
 
 Execute o Compose em uma VPS com IP público, configure domínio/TLS e os ports TCP/UDP exigidos pelo LiveKit. Em ambientes distribuídos, configure Redis e substitua a lista de salas em memória por persistência. Para produção séria, o LiveKit Cloud reduz a manutenção de TURN, certificados e escalabilidade.

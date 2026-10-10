@@ -5,7 +5,8 @@
   "description": "Compartilhamento de tela ao vivo para desktop com Electron, React e LiveKit",
   "workspaces": [
     "apps/server",
-    "apps/desktop"
+    "apps/desktop",
+    "apps/web"
   ],
   "scripts": {
     "dev": "npm run dev:desktop",
@@ -14,6 +15,9 @@
     "build": "npm run build:server && npm run build:desktop",
     "build:server": "npm --workspace apps/server run build",
     "build:desktop": "npm --workspace apps/desktop run build",
+    "dev:web": "npm --workspace apps/web run dev",
+    "build:web": "npm --workspace apps/web run build",
+    "typecheck:web": "npm --workspace apps/web run typecheck",
     "dist": "npm --workspace apps/desktop run dist",
     "typecheck": "npm run typecheck:server && npm run typecheck:desktop",
     "typecheck:server": "npm --workspace apps/server run typecheck",
