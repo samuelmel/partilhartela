@@ -27,6 +27,7 @@ function createWindow(): void {
 
   if (isDevelopment) {
     void window.loadURL('http://localhost:5173');
+    window.webContents.openDevTools();
   } else {
     void window.loadFile(path.join(__dirname, '../../dist/index.html'));
   }
@@ -67,7 +68,13 @@ app.whenReady().then(() => {
       fetchWindowIcons: true
     });
     const windows = process.platform === 'win32' ? await findApplicationWindows() : [];
-    return sources.map((source) => ({
+
+    // Deduplicate by source.id to prevent duplicate entries
+    const uniqueSources = Array.from(
+      new Map(sources.map(source => [source.id, source])).values()
+    );
+
+    return uniqueSources.map((source) => ({
       id: source.id,
       type: source.id.startsWith('screen:') ? 'screen' as const : 'window' as const,
       name: source.name,
