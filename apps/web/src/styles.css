@@ -379,3 +379,43 @@ button:disabled {
     font-size: 14px;
   }
 }
+
+@media (max-width: 720px) {
+  .room-info span {
+    display: none;
+  }
+  .compact strong {
+    display: none;
+  }
+  .watch-stage {
+    padding: 12px;
+  }
+  .focus {
+    display: block;
+  }
+  .thumbs {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    margin-top: 12px;
+  }
+  .focus > .tile {
+    margin-top: 35px;
+  }
+  .grid {
+    grid-template-columns: 1fr;
+  }
+  .home {
+    padding: 12px;
+  }
+  .brand-mark {
+    width: 48px;
+    height: 48px;
+    font-size: 24px;
+  }
+  .home h1 {
+    font-size: 24px;
+  }
+  .home p {
+    font-size: 14px;
+  }
+}

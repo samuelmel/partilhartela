@@ -925,7 +925,7 @@ function SourcePickerModal({ sources, selectedSource, loading, error, onClose, o
             <h2>Escolha a fonte</h2>
             <p className="muted">Selecione uma tela ou janela para transmitir.</p>
           </div>
-          <button className="close" onClick={onClose}>
+          <button className="close" onClick={onClose} aria-label="Fechar">
             ×
           </button>
         </div>
