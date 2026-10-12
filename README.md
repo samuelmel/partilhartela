@@ -1,191 +1,122 @@
-# PartilharTela
+# 🖥️ PartilharTela
 
-Aplicativo desktop para compartilhamento de tela ao vivo, com baixa latência, usando Electron, React, TypeScript, WebRTC e LiveKit. A interface e as mensagens do produto estão em português do Brasil.
+Aplicativo desktop moderno e de baixa latência para **compartilhamento de tela e áudio ao vivo**, construído com **Electron**, **React**, **TypeScript** e **LiveKit (WebRTC)**.
 
-## 🚀 Deploy no Render (Recomendado para produção)
-
-Para deploy fácil e gratuito no [Render](https://render.com):
-
-### Pré-requisitos
-- Conta no [Render](https://render.com)
-- Conta no [GitHub](https://github.com) (este repositório deve estar no GitHub)
-- Conta no [LiveKit Cloud](https://cloud.livekit.io) (gratuito para começar)
-
-### Passo a passo para deploy
-
-#### 1. Configure o LiveKit Cloud
-1. Acesse [LiveKit Cloud](https://cloud.livekit.io) e faça login
-2. Crie um novo projeto
-3. Copie as credenciais:
-   - **URL**: algo como `wss://seu-projeto.livekit.cloud`
-   - **API Key**: `APIKey...`
-   - **API Secret**: `APISecret...`
-
-#### 2. Faça fork deste repositório
-- Faça fork deste repositório no GitHub para sua conta
-
-#### 3. Crie o serviço no Render
-1. No Render dashboard, clique em "New +"
-2. Escolha "Web Service"
-3. Conecte seu repositório forkado
-4. Configure:
-   - **Name**: `partilhartela` (ou outro nome de sua escolha)
-   - **Region**: Escolha a região mais próxima de seus usuários
-   - **Branch**: `main`
-   - **Build Command**: `npm ci && npm run build:web`
-   - **Publish Directory**: `apps/web/dist`
-
-#### 4. Configure as variáveis de ambiente
-No Render, vá para "Environment" e adicione:
-- **Key**: `VITE_TOKEN_SERVER_URL`
-- **Value**: `https://seu-service-name.onrender.com` (substitua pelo URL do seu serviço)
-
-#### 5. Deploy do backend (opcional, para controle total)
-Para controle total, você também pode deployar o backend:
-
-1. Crie outro "Web Service" no Render
-2. Mesmo repositório
-3. **Build Command**: `npm ci && npm run build:server`
-4. **Publish Directory**: `apps/server/dist`
-5. Variáveis de ambiente:
-   - `LIVEKIT_URL`: sua URL do LiveKit Cloud
-   - `LIVEKIT_API_KEY`: sua API Key do LiveKit
-   - `LIVEKIT_API_SECRET`: sua API Secret do LiveKit
-   - `SERVER_PORT`: `10000` (Render usa essa porta por padrão)
-
-#### 6. Teste seu deployment
-- Acesse: `https://seu-service-name.onrender.com`
-- O aplicativo web estará disponível para espectadores
-- Para transmissão, continue usando o aplicativo Electron localmente
-
-## 🖥️ Uso Local (Desenvolvimento)
-
-### Pré-requisitos
-
-- Windows 10/11 (prioridade), Node.js 20 ou superior e npm 10+.
-- Docker Desktop com Compose.
-- Uma GPU/driver atualizado é recomendado para codificação H.264 por hardware. O Chromium faz fallback para software quando NVENC, AMF ou QuickSync não estiver disponível.
-
-### Etapa 1 — LiveKit e servidor de tokens
-
-1. Opcionalmente, copie `.env.example` para `.env` na raiz. O backend já usa os valores locais (`devkey`/`secret`) quando esse arquivo não existe:
-
-   ```powershell
-   Copy-Item .env.example .env
-   ```
-
-2. Suba o servidor de mídia:
-
-   ```powershell
-   docker compose -f infra\docker-compose.yml up -d
-   ```
-
-3. Instale as dependências:
-
-   ```powershell
-   npm install
-   ```
-
-4. Execute `npm run dev:desktop`; ele inicia automaticamente a API e o Electron. Depois, verifique `http://localhost:8787/health`: a resposta deve ser `{"ok":true}`.
-
-   Se aparecer `could not establish signal connection: Failed to fetch`, a API de tokens está funcionando, mas o LiveKit não está disponível. Inicie o Docker Desktop e confirme:
-
-   ```powershell
-   docker compose -f infra\docker-compose.yml up -d
-   docker compose -f infra\docker-compose.yml ps
-   ```
-
-   O container `livekit` deve aparecer como `running` e as portas `7880/tcp`, `7881/tcp` e `7882/udp` devem estar publicadas.
-
-   O backend mantém as salas criadas em memória durante o processo. Para produção, substitua esse armazenamento por Redis/Postgres ou use a API de salas do LiveKit, permitindo várias instâncias da API sem perder salas após reinício.
-
-### Etapa 2 — Aplicativo Electron
-
-O comando abaixo inicia automaticamente a API, o Vite e o Electron:
-
-```powershell
-npm run dev:desktop
-```
-
-Também é possível iniciar tudo com `npm run dev`. Não é necessário executar `npm run dev:server` separadamente quando usar um desses comandos.
-
-Para abrir uma segunda instância na mesma máquina, execute novamente `npm run dev:desktop` em outro terminal. Ela reutiliza o Vite que já está na porta 5173; a tentativa de iniciar uma segunda API é inofensiva, pois a primeira API continua atendendo as duas janelas.
-
-O primeiro botão cria uma sala e o apresentador recebe um código de seis caracteres. O segundo botão pede o código e um apelido para entrar na sala. Qualquer participante pode clicar em **Compartilhar tela** e publicar uma tela; ninguém começa a transmitir automaticamente.
-
-### Teste com duas instâncias na mesma máquina
-
-1. Suba o LiveKit e a API conforme a etapa 1.
-2. Execute `npm run dev:desktop`.
-3. Crie uma sala, selecione uma tela ou janela e clique na miniatura. Em **Áudio**, use **Áudio da janela escolhida (Windows)** para capturar somente o processo da janela selecionada, sem trazer o áudio do Discord ou do próprio PartilharTela. **Áudio de todo o sistema** continua disponível como fallback, mas captura todos os sons do Windows.
-4. Abra uma segunda instância executando novamente `npm run dev:desktop` em outro terminal, ou execute o instalador gerado em paralelo.
-5. Informe o código na segunda instância e confirme que o vídeo aparece. Teste trocar a fonte e alterar 720p30/1080p30/1080p60 sem desconectar a sala.
-6. Para testar o erro de sala, use um código aleatório que não foi criado: a API responde “Sala inexistente ou expirada”.
-
-## 📱 Versão web para espectadores
-
-O workspace `apps/web` é uma versão somente para assistir. O apresentador continua usando o aplicativo Electron, mas o espectador pode entrar pelo navegador sem instalar nada.
-
-Para testar localmente, mantenha a API em `http://localhost:8787` e execute:
-
-```powershell
-npm run dev:web
-```
-
-Abra `http://localhost:5174`, informe o código da sala e um apelido. Também é possível abrir diretamente:
-
-```text
-http://localhost:5174/?room=ABC123
-```
-
-## 🔨 Build e instalador Windows
-
-```powershell
-npm run typecheck
-npm run build
-npm run dist
-```
-
-O instalador NSIS `.exe` será criado em `apps\desktop\release`. O segredo `LIVEKIT_API_SECRET` nunca é empacotado no aplicativo; somente o backend o lê.
-
-## ☁️ Produção com LiveKit Cloud
-
-1. Crie um projeto em [LiveKit Cloud](https://cloud.livekit.io) e copie a URL WebSocket, API key e API secret.
-2. Hospede `apps/server` em uma VPS/serviço Node com HTTPS e defina `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` e `SERVER_PORT`.
-3. No build do desktop, defina `VITE_TOKEN_SERVER_URL` para a URL HTTPS da API. Nunca coloque a API secret no `.env` do desktop.
-4. Libere somente o endpoint de tokens pela internet, ative HTTPS, mantenha o rate limit e configure logs/monitoramento.
-
-## 💻 LiveKit self-hosted em VPS
-
-Execute o Compose em uma VPS com IP público, configure domínio/TLS e os ports TCP/UDP exigidos pelo LiveKit. Em ambientes distribuídos, configure Redis e substitua a lista de salas em memória por persistência. Para produção séria, o LiveKit Cloud reduz a manutenção de TURN, certificados e escalabilidade.
-
-## 📁 Estrutura
-
-```text
-apps/
-  server/       API Fastify de salas e tokens
-  desktop/
-    src/main/   processo Electron e desktopCapturer
-    src/preload/bridge IPC com contextIsolation
-    src/renderer/React, LiveKit e interface
-  web/          Versão web para espectadores (somente visualização)
-infra/          Docker Compose e configuração LiveKit
-```
-
-## 🎯 Melhorias futuras
-
-- Versão web para espectadores sem instalação.
-- Vários apresentadores e transferência de controle.
-- Gravação da transmissão e replay.
-- Senha opcional por sala, persistência de salas e autenticação.
-- Métricas WebRTC medidas no overlay (RTT, resolução, FPS, bitrate e encoder reportado pelo navegador).
-- Suporte a múltiplos monitores na captura de tela.
-- Controle de qualidade adaptativa baseado na banda detectada.
-
-## 📞 Suporte e contribuições
-
-Para reportar bugs ou solicitar funcionalidades, abra uma issue neste repositório. Pull requests são bem-vindas!
+Inclui captura de áudio exclusiva por aplicativo no Windows (para você compartilhar um jogo ou janela sem vazar o som do Discord ou outras chamadas) e suporte a espectadores via navegador web.
 
 ---
 
-🤖 **Gerado com [Claude Code](https://claude.com/claude-code)**
+## 📦 Como Baixar e Usar (Usuário Final)
+
+### 1. Download do Instalador Windows
+- Baixe o instalador oficial mais recente: **`PartilharTela Setup 1.0.0.exe`** (disponível na aba [Releases](https://github.com/) ou no link compartilhado pelo desenvolvedor).
+- Execute o arquivo `.exe` e conclua a instalação rápida no Windows.
+
+### 2. Para Transmitir a Tela (Apresentador)
+1. Abra o aplicativo **PartilharTela**.
+2. Clique no botão **"Criar Sala"**.
+3. Um código exclusivo de 6 caracteres será gerado (ex: `K9B2X4`).
+4. Clique em **"Compartilhar Tela"**:
+   - Escolha se deseja compartilhar a **Tela Inteira** ou uma **Janela de Aplicativo**.
+   - Escolha o modo de **Áudio**:
+     - *Áudio do aplicativo*: captura somente o som da janela escolhida (não vaza Discord nem chamadas).
+     - *Áudio de todo o sistema*: captura todos os sons do computador.
+     - *Sem áudio*.
+   - Escolha a qualidade: `720p 30fps`, `1080p 30fps` ou `1080p 60fps`.
+5. Envie o código da sala ou o link para seus amigos.
+
+### 3. Para Assistir (Espectador)
+- **Pelo App Desktop**: Abra o PartilharTela, clique em **"Entrar na Sala"**, informe o código e seu apelido.
+- **Pelo Navegador Web**: Acesse o link da sala (ex: `https://seu-site.com/?room=K9B2X4`) para assistir direto pelo navegador (Chrome, Edge, Firefox, celular) sem precisar instalar nada!
+
+---
+
+## 🚀 Infraestrutura em Produção
+
+O projeto já está integrado à nuvem:
+- **Servidor de Salas & Tokens**: Hospedado no [Render](https://render.com) (`https://partilhartela-server.onrender.com`).
+- **Servidor WebRTC / Mídia**: Hospedado no [LiveKit Cloud](https://cloud.livekit.io) para transmissão global de alta velocidade e baixa latência.
+
+---
+
+## 🛠️ Como Gerar o Instalador (.exe) para Distribuição
+
+Para gerar uma nova versão executável do aplicativo desktop pronta para distribuição:
+
+```bash
+# 1. Instale as dependências (se ainda não instalou)
+npm install
+
+# 2. Gere o instalador para Windows (NSIS)
+npm run dist
+```
+
+O arquivo instalável será gerado automaticamente em:
+```text
+apps/desktop/release/PartilharTela Setup 1.0.0.exe
+```
+
+### Onde hospedar para as pessoas baixarem:
+1. **GitHub Releases (Recomendado)**: Crie uma nova Release na página do seu repositório no GitHub (`v1.0.0`) e faça o upload do arquivo `.exe`.
+2. **Google Drive / OneDrive / Dropbox**: Suba o `.exe` e compartilhe o link de download direto com seus usuários.
+3. **Página Web**: Hospede o `apps/web` (na Vercel, Netlify ou Render) e adicione um botão "Baixar para Windows" apontando para o arquivo `.exe`.
+
+---
+
+## 💻 Desenvolvimento Local
+
+### Pré-requisitos
+- **Windows 10/11**
+- **Node.js 20+** e **npm 10+**
+
+### Comandos de Desenvolvimento
+
+```bash
+# Iniciar o aplicativo desktop em modo de desenvolvimento
+npm run dev:desktop
+
+# Iniciar apenas o servidor backend localmente (porta 8787)
+npm run dev:server
+
+# Iniciar o cliente web de espectadores localmente (porta 5174)
+npm run dev:web
+
+# Checagem de tipos TypeScript em todo o monorepo
+npm run typecheck
+```
+
+---
+
+## 📁 Estrutura do Projeto
+
+```text
+COMPARTILHARTELAV2/
+├── apps/
+│   ├── desktop/            # Aplicação Desktop Electron + React
+│   │   ├── src/main/       # Processo principal Electron e captura de áudio (loopback)
+│   │   ├── src/preload/    # Bridge IPC segura com contextIsolation
+│   │   ├── src/renderer/   # Interface React, conexão LiveKit e controles de transmissão
+│   │   └── release/        # Pasta onde o instalador .exe é gerado
+│   ├── server/             # API Fastify para autenticação e geração de tokens LiveKit
+│   └── web/                # Interface web leve para espectadores assistirem via browser
+├── infra/                  # Configurações de Docker Compose (LiveKit self-hosted opcional)
+└── package.json            # Monorepo NPM Workspaces
+```
+
+---
+
+## ✨ Recursos
+
+- [x] Transmissão de vídeo de baixa latência em tempo real via WebRTC.
+- [x] Captura de telas inteiras e janelas individuais.
+- [x] Captura de áudio isolada por processo no Windows (evita eco e vazamento de Discord).
+- [x] Ajuste dinâmico de qualidade (720p30, 1080p30, 1080p60).
+- [x] Códigos de sala simples e rápidos de 6 dígitos.
+- [x] Espectador web sem necessidade de download.
+- [x] Suporte a aceleração de hardware GPU para codificação de vídeo.
+
+---
+
+## 📄 Licença
+
+Este projeto é privado e de uso livre para compartilhamento de tela pessoal e colaborativo.
