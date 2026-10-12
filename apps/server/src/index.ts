@@ -65,7 +65,7 @@ app.post<{ Body: { nickname?: string } }>('/rooms', async (request, reply) => {
       expiresIn: 15 * 60 // 15 minutes in seconds
     });
   } catch (error) {
-    app.log.error('Error creating room:', error);
+    app.log.error({ err: error }, 'Error creating room:');
     return reply.code(500).send({
       error: 'Erro interno do servidor. Tente novamente.'
     });
@@ -117,7 +117,7 @@ app.post<{ Params: { code: string }; Body: { nickname?: string } }>('/rooms/:cod
       expiresIn: 15 * 60 // 15 minutes in seconds
     });
   } catch (error) {
-    app.log.error('Error generating token:', error);
+    app.log.error({ err: error }, 'Error generating token:');
     return reply.code(500).send({
       error: 'Erro interno do servidor. Tente novamente.'
     });
@@ -142,7 +142,7 @@ const startServer = async () => {
       process.exit(0);
     });
   } catch (error) {
-    app.log.error('❌ Falha ao iniciar o servidor:', error);
+    app.log.error({ err: error }, '❌ Falha ao iniciar o servidor:');
     process.exit(1);
   }
 };
