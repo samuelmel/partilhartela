@@ -614,8 +614,8 @@ function App(): React.JSX.Element {
                     onFocus={() => setFocusedStreamId(stream.id)}
                   />
                 )
-              }
-                )
+              )
+              )
               }
               {streams.length === 0 ? (
                 <EmptyState
