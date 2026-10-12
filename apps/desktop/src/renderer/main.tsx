@@ -90,8 +90,10 @@ function App(): React.JSX.Element {
   useEffect(() => { audioModeRef.current = audioMode; }, [audioMode]);
   useEffect(() => { excludedAudioProcessRef.current = excludedAudioProcessId; }, [excludedAudioProcessId]);
 
+  // Clean up room connection on unmount
   useEffect(() => () => { roomRef.current?.disconnect(); }, []);
 
+  // Keyboard shortcuts
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -107,97 +109,7 @@ function App(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [focusedStreamId]);
 
-  useEffect(() => {
-    const video = localPreviewRef.current;
-    const stream = localPreviewStreamRef.current;
-    if (!video || !stream || !isSharing) return;
-    video.srcObject = stream;
-    void video.play().catch((reason) => {
-      console.warn('[PartilharTela] Não foi possível iniciar o preview local:', reason);
-    });
-  }, [isSharing]);
-
-  async function unpublishLocalTrack(trackRef: React.MutableRefObject<LocalVideoTrack | LocalAudioTrack | undefined>, source: Track.Source): Promise<void> {
-    const track = trackRef.current;
-    trackRef.current = undefined;
-    const room = roomRef.current;
-    if (!track) return;
-    try {
-      if (room) await room.localParticipant.unpublishTrack(track);
-    } finally {
-      track.detach();
-      track.stop();
-    }
-
-    if (source === Track.Source.ScreenShare && localPreviewRef.current) {
-      localPreviewRef.current.srcObject = null;
-    }
-    if (source === Track.Source.ScreenShare) localPreviewStreamRef.current = undefined;
-  }
-
-  async function stopApplicationAudio(): Promise<void> {
-    removeAudioListenerRef.current?.();
-    removeAudioListenerRef.current = undefined;
-    audioNodeRef.current?.disconnect();
-    audioNodeRef.current = undefined;
-    await audioContextRef.current?.close().catch(() => undefined);
-    audioContextRef.current = undefined;
-    await window.partilharTela.stopApplicationAudio().catch(() => undefined);
-  }
-
-  async function createPcmAudio(startCapture: () => Promise<void>): Promise<LocalAudioTrack> {
-    const context = new AudioContext({ sampleRate: 48_000 });
-    const workletSource = `
-      class Pcm16Processor extends AudioWorkletProcessor {
-        constructor() { super(); this.queue = []; this.offset = 0; this.port.onmessage = (event) => {
-          const bytes = new Uint8Array(event.data);
-          const samples = new Float32Array(Math.floor(bytes.byteLength / 2));
-          const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-          for (let i = 0; i < samples.length; i++) samples[i] = view.getInt16(i * 2, true) / 32768;
-          this.queue.push(samples);
-        }; }
-        process(_inputs, outputs) {
-          const output = outputs[0];
-          for (let i = 0; i < output[0].length; i++) {
-            const current = this.queue[0];
-            for (let channel = 0; channel < output.length; channel++) {
-              output[channel][i] = current ? current[this.offset * 2 + channel] ?? 0 : 0;
-            }
-            if (current) {
-              this.offset++;
-              if (this.offset * 2 >= current.length) { this.queue.shift(); this.offset = 0; }
-            }
-          }
-          return true;
-        }
-      }
-      registerProcessor('partilhartela-pcm16', Pcm16Processor);
-    `;
-    const moduleUrl = URL.createObjectURL(new Blob([workletSource], { type: 'application/javascript' }));
-    try {
-      await context.audioWorklet.addModule(moduleUrl);
-    } finally {
-      URL.revokeObjectURL(moduleUrl);
-    }
-    const node = new AudioWorkletNode(context, 'partilhartela-pcm16', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
-    const destination = context.createMediaStreamDestination();
-    node.connect(destination);
-    audioNodeRef.current = node;
-    audioContextRef.current = context;
-    removeAudioListenerRef.current = window.partilharTela.onAudioData((chunk) => {
-      node.port.postMessage(chunk.buffer, [chunk.buffer]);
-    });
-    await startCapture();
-    await context.resume();
-    const track = destination.stream.getAudioTracks()[0];
-    if (!track) throw new Error('Não foi possível criar a faixa de áudio do aplicativo.');
-    return new LocalAudioTrack(track);
-  }
-
-  function createApplicationAudio(processId: string): Promise<LocalAudioTrack> {
-    return createPcmAudio(() => window.partilharTela.startApplicationAudio(processId));
-  }
-
+  // Update participant list when room changes
   useEffect(() => {
     const room = roomRef.current;
     if (!room) return;
@@ -503,8 +415,84 @@ function App(): React.JSX.Element {
     if (bytes !== undefined) statsSnapshotRef.current = { bytes, time: now };
   }
 
-  if (screen === 'home') return <main className="shell home"><div className="brand"><span className="brand-mark">◈</span><h1>PartilharTela</h1><p>Compartilhe sua tela ao vivo, sem complicação.</p></div><label className="home-nickname">Seu apelido<input value={nickname} maxLength={32} onChange={(event) => setNickname(event.target.value)} placeholder="Como você quer aparecer?" onKeyDown={(event) => { if (event.key === 'Enter' && nickname.trim()) void createRoom(); }} /></label><div className="actions"><button className="primary" disabled={!nickname.trim()} onClick={() => void createRoom()}>Criar sala</button><button onClick={() => setScreen('join')}>Entrar na sala</button></div><FormError message={error} /></main>;
-  if (screen === 'join') return <main className="shell centered"><section className="card"><button className="back" onClick={() => setScreen('home')}>← Voltar</button><h2>Entrar em uma sala</h2><p className="muted">Digite o código recebido do apresentador.</p><label>Código da sala<input value={code} maxLength={6} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="ABC123" /></label><label>Seu apelido<input value={nickname} maxLength={32} onChange={(event) => setNickname(event.target.value)} placeholder="Visitante" /></label><button className="primary full" disabled={code.length !== 6} onClick={() => void joinRoom()}>Assistir</button><FormError message={error} /></section></main>;
+  if (screen === 'home') return (
+    <main className="shell home" role="main">
+      <div className="brand">
+        <span className="brand-mark" aria-hidden="true">◈</span>
+        <h1>PartilharTela</h1>
+        <p>Compartilhe sua tela ao vivo, sem complicação.</p>
+      </div>
+      <label className="home-nickname">
+        Seu apelido
+        <input
+          value={nickname}
+          maxLength={32}
+          onChange={(event) => setNickname(event.target.value)}
+          placeholder="Como você quer aparecer?"
+          onKeyDown={(event) => { if (event.key === 'Enter' && nickname.trim()) void createRoom(); }}
+          aria-label="Seu apelido na transmissão"
+        />
+      </label>
+      <div className="actions">
+        <button
+          className="primary"
+          disabled={!nickname.trim()}
+          onClick={() => void createRoom()}
+          aria-label="Criar nova sala de transmissão"
+        >
+          Criar sala
+        </button>
+        <button
+          onClick={() => setScreen('join')}
+          aria-label="Entrar em uma sala existente"
+        >
+          Entrar na sala
+        </button>
+      </div>
+      <FormError message={error} />
+    </main>
+  );
+
+  if (screen === 'join') return (
+    <main className="shell centered" role="main">
+      <section className="card">
+        <button className="back" onClick={() => setScreen('home')}>
+          ← Voltar
+        </button>
+        <h2>Entrar em uma sala</h2>
+        <p className="muted">Digite o código recebido do apresentador.</p>
+        <label>
+          Código da sala
+          <input
+            value={code}
+            maxLength={6}
+            onChange={(event) => setCode(event.target.value.toUpperCase())}
+            placeholder="ABC123"
+            aria-label="Código da sala com 6 caracteres"
+          />
+        </label>
+        <label>
+          Seu apelido
+          <input
+            value={nickname}
+            maxLength={32}
+            onChange={(event) => setNickname(event.target.value)}
+            placeholder="Visitante"
+            aria-label="Seu apelido na transmissão"
+          />
+        </label>
+        <button
+          className="primary full"
+          disabled={code.length !== 6}
+          onClick={() => void joinRoom()}
+          aria-label="Entrar na sala para assistir"
+        >
+          Assistir
+        </button>
+        <FormError message={error} />
+      </section>
+    </main>
+  );
 
   const selectedQuality = qualities[quality];
   const canShare = screen === 'presenter' || screen === 'viewer';
@@ -513,38 +501,239 @@ function App(): React.JSX.Element {
     ...remoteTracks.map((item) => ({ ...item, local: false as const }))
   ];
   const focused = streams.find((stream) => stream.id === focusedStreamId);
-  return <main className="room">
-    <TopBar roomCode={roomCode} viewerCount={viewerCount} connectionState={connectionState} statsOpen={statsOpen} onToggleSidebar={() => setSidebarOpen((value) => !value)} onToggleStats={() => setStatsOpen((value) => !value)} onCopy={() => void copyLink()} />
-    {connectionState === 'Reconectando...' && <div className="reconnecting-banner">● Reconectando à sala...</div>}
-    <div className="room-body">
-      {sidebarOpen && <Sidebar nickname={nickname} participants={participants} streams={streams} />}
-      <section className="stage">
-        {focused ? <div className="focus-layout">
-          <div className="focus-main">
-            <button className="back-grid" onClick={() => setFocusedStreamId(undefined)}>← Voltar à grade</button>
-            {focused.local ? <LocalTile name={focused.name} previewRef={localPreviewRef} previewStream={localPreviewStreamRef.current} previewVersion={previewVersion} streamId="local" onFocus={() => undefined} /> : <VideoTile key={focused.id} name={focused.name} identity={focused.identity} track={focused.track} audioTrack={remoteAudioTracks[focused.identity]} audioSettings={audioSettings[focused.identity]} onAudioSettings={(settings) => setAudioSettings((current) => ({ ...current, [focused.identity]: settings }))} streamId={focused.id} onFocus={() => undefined} />}
-          </div>
-          <div className="focus-strip">{streams.filter((stream) => stream.id !== focused.id).map((stream) => stream.local ? <LocalTile key={stream.id} name={stream.name} previewRef={localPreviewRef} previewStream={localPreviewStreamRef.current} previewVersion={previewVersion} streamId={stream.id} onFocus={() => setFocusedStreamId(stream.id)} /> : <VideoTile key={stream.id} name={stream.name} identity={stream.identity} track={stream.track} audioTrack={remoteAudioTracks[stream.identity]} audioSettings={audioSettings[stream.identity]} onAudioSettings={(settings) => setAudioSettings((current) => ({ ...current, [stream.identity]: settings }))} streamId={stream.id} onFocus={() => setFocusedStreamId(stream.id)} />)}</div>
-        </div> : <div className="tile-grid">
-          {streams.map((stream) => stream.local ? <LocalTile key={stream.id} name={stream.name} previewRef={localPreviewRef} previewStream={localPreviewStreamRef.current} previewVersion={previewVersion} streamId={stream.id} onFocus={() => setFocusedStreamId(stream.id)} /> : <VideoTile key={stream.id} name={stream.name} identity={stream.identity} track={stream.track} audioTrack={remoteAudioTracks[stream.identity]} audioSettings={audioSettings[stream.identity]} onAudioSettings={(settings) => setAudioSettings((current) => ({ ...current, [stream.identity]: settings }))} streamId={stream.id} onFocus={() => setFocusedStreamId(stream.id)} />)}
-          {streams.length === 0 && <EmptyState canShare={canShare} roomCode={roomCode} onShare={() => void openShareDialog()} />}
-        </div>}
-        <AudioRenderer tracks={remoteAudioTracks} settings={audioSettings} />
-        {statsOpen && <StatsOverlay stats={mediaStats} fallback={`${selectedQuality.width}x${selectedQuality.height}`} />}
-      </section>
-    </div>
-    {canShare && <ControlBar quality={quality} motion={motion} audioMode={audioMode} audioProcesses={audioProcesses} excludedAudioProcessId={excludedAudioProcessId} isSharing={isSharing} onQuality={(next) => { setQuality(next); if (isSharing) void publishScreen(selectedSource, next); }} onMotion={setMotion} onAudio={(mode) => { setAudioMode(mode); if (mode === 'system-excluding-discord' && audioProcesses.length === 0) void refreshAudioProcesses(); }} onExcludedAudio={setExcludedAudioProcessId} onShare={() => void openShareDialog()} onStop={() => void stopSharing()} />}
-    {shareDialogOpen && <SourcePickerModal sources={sources} selectedSource={selectedSource} loading={loadingSources} error={error} onClose={() => setShareDialogOpen(false)} onRefresh={() => void refreshSources()} onSelect={(sourceId) => { setSelectedSource(sourceId); void publishScreen(sourceId); }} />}
-  </main>;
+
+  return (
+    <main className="room" role="main">
+      <TopBar
+        roomCode={roomCode}
+        viewerCount={viewerCount}
+        connectionState={connectionState}
+        statsOpen={statsOpen}
+        onToggleSidebar={() => setSidebarOpen((value) => !value)}
+        onToggleStats={() => setStatsOpen((value) => !value)}
+        onCopy={() => void copyLink()}
+      />
+      {connectionState === 'Reconectando...' && (
+        <div className="reconnecting-banner" role="status">
+          ● Reconectando à sala...
+        </div>
+      )}
+      <div className="room-body">
+        {sidebarOpen && (
+          <Sidebar
+            nickname={nickname}
+            participants={participants}
+            streams={streams}
+          />
+        )}
+        <section className="stage">
+          {focused ? (
+            <div className="focus-layout">
+              <div className="focus-main">
+                <button
+                  className="back-grid"
+                  onClick={() => setFocusedStreamId(undefined)}
+                  aria-label="Voltar à grade de vídeos"
+                >
+                  ← Voltar à grade
+                </button>
+                {focused.local ? (
+                  <LocalTile
+                    name={focused.name}
+                    previewRef={localPreviewRef}
+                    previewStream={localPreviewStreamRef.current}
+                    previewVersion={previewVersion}
+                    streamId="local"
+                    onFocus={() => undefined}
+                  />
+                ) : (
+                  <VideoTile
+                    key={focused.id}
+                    name={focused.name}
+                    identity={focused.identity}
+                    track={focused.track}
+                    audioTrack={remoteAudioTracks[focused.identity]}
+                    audioSettings={audioSettings[focused.identity]}
+                    onAudioSettings={(settings) => setAudioSettings((current) => ({ ...current, [focused.identity]: settings }))}
+                    streamId={focused.id}
+                    onFocus={() => undefined}
+                  />
+                )}
+              </div>
+              <div className="focus-strip">
+                {streams.filter((stream) => stream.id !== focused.id).map((stream) => (
+                  stream.local ? (
+                    <LocalTile
+                      key={stream.id}
+                      name={stream.name}
+                      previewRef={localPreviewRef}
+                      previewStream={localPreviewStreamRef.current}
+                      previewVersion={previewVersion}
+                      streamId={stream.id}
+                      onFocus={() => setFocusedStreamId(stream.id)}
+                    />
+                  ) : (
+                    <VideoTile
+                      key={stream.id}
+                      name={stream.name}
+                      identity={stream.identity}
+                      track={stream.track}
+                      audioTrack={remoteAudioTracks[stream.identity]}
+                      audioSettings={audioSettings[stream.identity]}
+                      onAudioSettings={(settings) => setAudioSettings((current) => ({ ...current, [stream.identity]: settings }))}
+                      streamId={stream.id}
+                      onFocus={() => setFocusedStreamId(stream.id)}
+                    />
+                  )
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="tile-grid">
+              {streams.map((stream) => (
+                stream.local ? (
+                  <LocalTile
+                    key={stream.id}
+                    name={stream.name}
+                    previewRef={localPreviewRef}
+                    previewStream={localPreviewStreamRef.current}
+                    previewVersion={previewVersion}
+                    streamId={stream.id}
+                    onFocus={() => setFocusedStreamId(stream.id)}
+                  />
+                ) : (
+                  <VideoTile
+                    key={stream.id}
+                    name={stream.name}
+                    identity={stream.identity}
+                    track={stream.track}
+                    audioTrack={remoteAudioTracks[stream.identity]}
+                    audioSettings={audioSettings[stream.identity]}
+                    onAudioSettings={(settings) => setAudioSettings((current) => ({ ...current, [stream.identity]: settings }))}
+                    streamId={stream.id}
+                    onFocus={() => setFocusedStreamId(stream.id)}
+                  />
+                )
+              }
+                )
+              }
+              {streams.length === 0 ? (
+                <EmptyState
+                  canShare={canShare}
+                  roomCode={roomCode}
+                  onShare={() => void openShareDialog()}
+                />
+              ) : null}
+            </div>
+          )}
+          <AudioRenderer tracks={remoteAudioTracks} settings={audioSettings} />
+          {statsOpen && (
+            <StatsOverlay
+              stats={mediaStats}
+              fallback={`${selectedQuality.width}x${selectedQuality.height}`}
+            />
+          )}
+        </section>
+      </div>
+      {canShare && (
+        <ControlBar
+          quality={quality}
+          motion={motion}
+          audioMode={audioMode}
+          audioProcesses={audioProcesses}
+          excludedAudioProcessId={excludedAudioProcessId}
+          isSharing={isSharing}
+          onQuality={(next) => {
+            setQuality(next);
+            if (isSharing) void publishScreen(selectedSource, next);
+          }}
+          onMotion={setMotion}
+          onAudio={(mode) => {
+            setAudioMode(mode);
+            if (mode === 'system-excluding-discord' && audioProcesses.length === 0) void refreshAudioProcesses();
+          }}
+          onExcludedAudio={setExcludedAudioProcessId}
+          onShare={() => void openShareDialog()}
+          onStop={() => void stopSharing()}
+        />
+      )}
+      {shareDialogOpen && (
+        <SourcePickerModal
+          sources={sources}
+          selectedSource={selectedSource}
+          loading={loadingSources}
+          error={error}
+          onClose={() => setShareDialogOpen(false)}
+          onRefresh={() => void refreshSources()}
+          onSelect={(sourceId) => {
+            setSelectedSource(sourceId);
+            void publishScreen(sourceId);
+          }}
+        />
+      )}
+    </main>
+  );
 }
 
 function TopBar({ roomCode, viewerCount, connectionState, statsOpen, onToggleSidebar, onToggleStats, onCopy }: { roomCode: string; viewerCount: number; connectionState: string; statsOpen: boolean; onToggleSidebar: () => void; onToggleStats: () => void; onCopy: () => void }): React.JSX.Element {
-  return <header className="topbar"><button className="icon-button" onClick={onToggleSidebar} aria-label="Mostrar ou ocultar participantes">☰</button><div className="brand compact"><span className="brand-mark">◈</span><strong>PartilharTela</strong></div><div className="room-meta"><span>Sala <strong>{roomCode}</strong></span><button className="small" onClick={onCopy}>Copiar</button><span className={connectionState === 'Reconectando...' ? 'connection warning' : 'connection'}>● {connectionState}</span><span>{viewerCount} participante{viewerCount === 1 ? '' : 's'}</span><button className={`small ${statsOpen ? 'active' : ''}`} onClick={onToggleStats}>▣ Estatísticas</button></div></header>;
+  return (
+    <header className="topbar">
+      <button
+        className="icon-button"
+        onClick={onToggleSidebar}
+        aria-label="Mostrar ou ocultar participantes"
+      >
+        ☰
+      </button>
+      <div className="brand compact">
+        <span className="brand-mark" aria-hidden="true">◈</span>
+        <strong>PartilharTela</strong>
+      </div>
+      <div className="room-meta">
+        <span>Sala <strong>{roomCode}</strong></span>
+        <button className="small" onClick={onCopy}>
+          Copiar
+        </button>
+        <span className={connectionState === 'Reconectando...' ? 'connection warning' : 'connection'}>
+          ● {connectionState}
+        </span>
+        <span>{viewerCount} participante{viewerCount === 1 ? '' : 's'}</span>
+        <button
+          className={`small ${statsOpen ? 'active' : ''}`}
+          onClick={onToggleStats}
+          aria-label={statsOpen ? 'Ocultar estatísticas' : 'Mostrar estatísticas'}
+        >
+          ▣ Estatísticas
+        </button>
+      </div>
+    </header>
+  );
 }
 
 function Sidebar({ nickname, participants, streams }: { nickname: string; participants: ParticipantInfo[]; streams: Array<{ id: string; name: string; local: boolean; identity?: string }> }): React.JSX.Element {
   const liveIdentities = new Set(streams.filter((stream) => !stream.local).map((stream) => stream.identity).filter((identity): identity is string => Boolean(identity)));
-  return <aside className="sidebar"><div className="sidebar-title"><span>Participantes</span><strong>{participants.length + 1}</strong></div><div className="participant-list"><div className="participant"><span className="status-dot" />{nickname.trim() || 'Você'}<span className="participant-muted">você</span></div>{participants.map((participant) => <div className="participant" key={participant.identity}><span className={`status-dot ${liveIdentities.has(participant.identity) ? 'live' : ''}`} />{participant.name || participant.identity}{liveIdentities.has(participant.identity) && <span className="live-mini">AO VIVO</span>}</div>)}</div></aside>;
+  return (
+    <aside className="sidebar">
+      <div className="sidebar-title">
+        <span>Participantes</span>
+        <strong>{participants.length + 1}</strong>
+      </div>
+      <div className="participant-list">
+        <div className="participant">
+          <span className="status-dot" />
+          {nickname.trim() || 'Você'}
+          <span className="participant-muted">você</span>
+        </div>
+        {participants.map((participant) => (
+          <div className="participant" key={participant.identity}>
+            <span className={`status-dot ${liveIdentities.has(participant.identity) ? 'live' : ''}`} />
+            {participant.name || participant.identity}
+            {liveIdentities.has(participant.identity) && <span className="live-mini">AO VIVO</span>}
+          </div>
+        ))}
+      </div>
+    </aside>
+  );
 }
 
 function LocalTile({ name, previewRef, previewStream, previewVersion, streamId, onFocus }: { name: string; previewRef: React.RefObject<HTMLVideoElement>; previewStream?: MediaStream; previewVersion: number; streamId: string; onFocus: () => void }): React.JSX.Element {
@@ -572,33 +761,239 @@ function LocalTile({ name, previewRef, previewStream, previewVersion, streamId, 
     };
   }, [previewRef, previewStream, previewVersion]);
 
-  return <div className="video-tile local-tile" data-stream-id={streamId} onClick={onFocus} onDoubleClick={(event) => void toggleFullscreen(event.currentTarget)}><video ref={previewRef} autoPlay muted playsInline /><div className="tile-gradient" /><div className="tile-caption"><span>{name}</span><b>AO VIVO</b></div><button className="tile-fullscreen" onClick={(event) => { event.stopPropagation(); void toggleFullscreen(event.currentTarget.parentElement!); }}>⛶</button></div>;
+  return (
+    <div
+      className="video-tile local-tile"
+      data-stream-id={streamId}
+      onClick={onFocus}
+      onDoubleClick={(event) => void toggleFullscreen(event.currentTarget)}
+    >
+      <video ref={previewRef} autoPlay muted playsInline />
+      <div className="tile-gradient" />
+      <div className="tile-caption">
+        <span>{name}</span>
+        <b>AO VIVO</b>
+      </div>
+      <button
+        className="tile-fullscreen"
+        onClick={(event) => {
+          event.stopPropagation();
+          void toggleFullscreen(event.currentTarget.parentElement!);
+        }}
+        aria-label="Alternar tela cheia"
+      >
+        ⛶
+      </button>
+    </div>
+  );
 }
 
 function StatsOverlay({ stats, fallback }: { stats: MediaStats; fallback: string }): React.JSX.Element {
-  return <div className="stats-overlay"><strong>Estatísticas</strong><span>Resolução <b>{stats.resolution ?? fallback}</b></span><span>FPS <b>{stats.fps ?? '--'}</b></span><span>Codec <b>{stats.encoder ?? '--'}</b></span><span>Bitrate <b>{stats.bitrateKbps ? `${stats.bitrateKbps} kbps` : '--'}</b></span><span>RTT <b>{stats.rttMs !== undefined ? `${stats.rttMs} ms` : '--'}</b></span></div>;
+  return (
+    <div className="stats-overlay">
+      <strong>Estatísticas</strong>
+      <span>Resolução <b>{stats.resolution ?? fallback}</b></span>
+      <span>FPS <b>{stats.fps ?? '--'}</b></span>
+      <span>Codec <b>{stats.encoder ?? '--'}</b></span>
+      <span>Bitrate <b>{stats.bitrateKbps ? `${stats.bitrateKbps} kbps` : '--'}</b></span>
+      <span>RTT <b>{stats.rttMs !== undefined ? `${stats.rttMs} ms` : '--'}</b></span>
+    </div>
+  );
 }
 
 function EmptyState({ canShare, roomCode, onShare }: { canShare: boolean; roomCode: string; onShare: () => void }): React.JSX.Element {
-  return <div className="empty-stage"><div className="empty-icon">▧</div><h2>Ninguém está transmitindo</h2><p>{canShare ? <>Clique em <strong>Compartilhar tela</strong> para começar.</> : <>Aguardando alguém compartilhar a tela na sala <strong>{roomCode}</strong>.</>}</p>{canShare && <button className="primary" onClick={onShare}>Compartilhar tela</button>}</div>;
+  return (
+    <div className="empty-stage">
+      <div className="empty-icon" aria-hidden="true">▧</div>
+      <h2>Ninguém está transmitindo</h2>
+      <p>
+        {canShare ? (
+          <>
+            Clique em <strong>Compartilhar tela</strong> para começar.
+          </>
+        ) : (
+          <>
+            Aguardando alguém compartilhar a tela na sala <strong>{roomCode}</strong>.
+          </>
+        )}
+      </p>
+      {canShare && (
+        <button
+          className="primary"
+          onClick={onShare}
+          aria-label="Compartilhar sua tela"
+        >
+          Compartilhar tela
+        </button>
+      )}
+    </div>
+  );
 }
 
 function ControlBar({ quality, motion, audioMode, audioProcesses, excludedAudioProcessId, isSharing, onQuality, onMotion, onAudio, onExcludedAudio, onShare, onStop }: { quality: Quality; motion: boolean; audioMode: AudioMode; audioProcesses: Array<{ title: string; processId: string }>; excludedAudioProcessId: string; isSharing: boolean; onQuality: (quality: Quality) => void; onMotion: (motion: boolean) => void; onAudio: (mode: AudioMode) => void; onExcludedAudio: (id: string) => void; onShare: () => void; onStop: () => void }): React.JSX.Element {
-  return <footer className="controls"><div className="control-actions">{isSharing ? <><button onClick={onShare}>↔ Trocar fonte</button><button className="danger" onClick={onStop}>■ Parar</button></> : <button className="primary" onClick={onShare}>▣ Compartilhar tela</button>}</div><label>Qualidade<select value={quality} onChange={(event) => onQuality(event.target.value as Quality)}><option value="720p30">720p30</option><option value="1080p30">1080p30</option><option value="1080p60">1080p60</option></select></label><label>Modo<select value={motion ? 'motion' : 'detail'} onChange={(event) => onMotion(event.target.value === 'motion')}><option value="motion">Movimento / jogos</option><option value="detail">Texto / código</option></select></label><label>Áudio<select value={audioMode} onChange={(event) => onAudio(event.target.value as AudioMode)}><option value="none">Sem áudio</option><option value="system">Todo o sistema</option><option value="application">Janela escolhida</option><option value="system-excluding-discord">Sistema, exceto processo</option></select></label>{audioMode === 'system-excluding-discord' && <label>Excluir<select value={excludedAudioProcessId} onChange={(event) => onExcludedAudio(event.target.value)}><option value="">Escolha</option>{audioProcesses.map((item) => <option key={item.processId} value={item.processId}>{item.title}</option>)}</select></label>}</footer>;
+  return (
+    <footer className="controls">
+      <div className="control-actions">
+        {isSharing ? (
+          <>
+            <button onClick={onShare}>
+              ↔ Trocar fonte
+            </button>
+            <button className="danger" onClick={onStop}>
+              ■ Parar
+            </button>
+          </>
+        ) : (
+          <button
+            className="primary"
+            onClick={onShare}
+            aria-label="Compartilhar tela"
+          >
+            ▣ Compartilhar tela
+          </button>
+        )}
+      </div>
+      <label>
+        Qualidade
+        <select
+          value={quality}
+          onChange={(event) => onQuality(event.target.value as Quality)}
+          aria-label="Qualidade da transmissão"
+        >
+          <option value="720p30">720p30</option>
+          <option value="1080p30">1080p30</option>
+          <option value="1080p60">1080p60</option>
+        </select>
+      </label>
+      <label>
+        Modo
+        <select
+          value={motion ? 'motion' : 'detail'}
+          onChange={(event) => onMotion(event.target.value === 'motion')}
+          aria-label="Modo de captura de vídeo"
+        >
+          <option value="motion">Movimento / jogos</option>
+          <option value="detail">Texto / código</option>
+        </select>
+      </label>
+      <label>
+        Áudio
+        <select
+          value={audioMode}
+          onChange={(event) => onAudio(event.target.value as AudioMode)}
+          aria-label="Modo de captura de áudio"
+        >
+          <option value="none">Sem áudio</option>
+          <option value="system">Todo o sistema</option>
+          <option value="application">Janela escolhida</option>
+          <option value="system-excluding-discord">Sistema, exceto processo</option>
+        </select>
+      </label>
+      {audioMode === 'system-excluding-discord' && (
+        <label>
+          Excluir
+          <select
+            value={excludedAudioProcessId}
+            onChange={(event) => onExcludedAudio(event.target.value)}
+            aria-label="Processo de áudio para excluir"
+          >
+            <option value="">Escolha</option>
+            {audioProcesses.map((item) => (
+              <option key={item.processId} value={item.processId}>
+                {item.title}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+    </footer>
+  );
 }
 
 function SourcePickerModal({ sources, selectedSource, loading, error, onClose, onRefresh, onSelect }: { sources: DesktopSource[]; selectedSource: string; loading: boolean; error: string; onClose: () => void; onRefresh: () => void; onSelect: (id: string) => void }): React.JSX.Element {
   const [tab, setTab] = useState<'screens' | 'windows'>('screens');
   const filtered = sources.filter((source) => tab === 'screens' ? source.type === 'screen' : source.type === 'window');
-  return <div className="modal-backdrop" role="dialog" aria-modal="true"><section className="share-modal"><div className="modal-header"><div><h2>Escolha a fonte</h2><p className="muted">Selecione uma tela ou janela para transmitir.</p></div><button className="close" onClick={onClose}>×</button></div><div className="source-tabs"><button className={tab === 'screens' ? 'active' : ''} onClick={() => setTab('screens')}>Telas</button><button className={tab === 'windows' ? 'active' : ''} onClick={() => setTab('windows')}>Janelas</button></div>{loading ? <p className="muted">Carregando fontes...</p> : filtered.length === 0 ? <div className="empty-sources"><p>Nenhuma fonte encontrada nesta aba.</p><button onClick={onRefresh}>Atualizar</button></div> : <div className="sources">{filtered.map((source) => <button className={`source ${selectedSource === source.id ? 'selected' : ''}`} key={source.id} onClick={() => onSelect(source.id)}><img src={source.thumbnail} alt="" /><span>{source.name}</span>{selectedSource === source.id && <b>Selecionada</b>}</button>)}</div>}<FormError message={error} /></section></div>;
+  return (
+    <div
+      className="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+    >
+      <section className="share-modal">
+        <div className="modal-header">
+          <div>
+            <h2>Escolha a fonte</h2>
+            <p className="muted">Selecione uma tela ou janela para transmitir.</p>
+          </div>
+          <button className="close" onClick={onClose}>
+            ×
+          </button>
+        </div>
+        <div className="source-tabs">
+          <button
+            className={tab === 'screens' ? 'active' : ''}
+            onClick={() => setTab('screens')}
+          >
+            Telas
+          </button>
+          <button
+            className={tab === 'windows' ? 'active' : ''}
+            onClick={() => setTab('windows')}
+          >
+            Janelas
+          </button>
+        </div>
+        {loading ? (
+          <p className="muted">Carregando fontes...</p>
+        ) : filtered.length === 0 ? (
+          <div className="empty-sources">
+            <p>Nenhuma fonte encontrada nesta aba.</p>
+            <button onClick={onRefresh}>
+              Atualizar
+            </button>
+          </div>
+        ) : (
+          <div className="sources">
+            {filtered.map((source) => (
+              <button
+                className={`source ${selectedSource === source.id ? 'selected' : ''}`}
+                key={source.id}
+                onClick={() => onSelect(source.id)}
+              >
+                <img src={source.thumbnail} alt="" />
+                <span>{source.name}</span>
+                {selectedSource === source.id && <b>Selecionada</b>}
+              </button>
+            ))}
+          </div>
+        )}
+        <FormError message={error} />
+      </section>
+    </div>
+  );
 }
 
 function AudioRenderer({ tracks, settings }: { tracks: Record<string, RemoteAudioTrack>; settings: Record<string, AudioSettings> }): React.JSX.Element {
-  return <div className="remote-audio-renderer" aria-hidden="true">{Object.entries(tracks).map(([identity, track]) => <RemoteAudioElement key={`${identity}-${track.sid}`} identity={identity} track={track} settings={settings[identity]} />)}</div>;
+  return (
+    <div
+      className="remote-audio-renderer"
+      aria-hidden="true"
+    >
+      {Object.entries(tracks).map(([identity, track]) => (
+        <RemoteAudioElement
+          key={`${identity}-${track.sid}`}
+          identity={identity}
+          track={track}
+          settings={settings[identity]}
+        />
+      ))}
+    </div>
+  );
 }
 
 function RemoteAudioElement({ identity, track, settings }: { identity: string; track: RemoteAudioTrack; settings?: AudioSettings }): React.JSX.Element {
   const audioRef = useRef<HTMLAudioElement>(null);
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -621,12 +1016,20 @@ function RemoteAudioElement({ identity, track, settings }: { identity: string; t
       track.detach(audio);
     };
   }, [identity, track]);
+
   useEffect(() => {
     if (!audioRef.current) return;
     audioRef.current.muted = settings?.muted ?? false;
     audioRef.current.volume = settings?.muted ? 0 : settings?.volume ?? 1;
   }, [settings]);
-  return <audio ref={audioRef} autoPlay preload="auto" />;
+
+  return (
+    <audio
+      ref={audioRef}
+      autoPlay
+      preload="auto"
+    />
+  );
 }
 
 function VideoTile({ name, identity, track, audioTrack, audioSettings, onAudioSettings, streamId, onFocus }: { name: string; identity: string; track: RemoteVideoTrack; audioTrack?: RemoteAudioTrack; audioSettings?: AudioSettings; onAudioSettings: (settings: AudioSettings) => void; streamId: string; onFocus: () => void }): React.JSX.Element {
@@ -639,7 +1042,95 @@ function VideoTile({ name, identity, track, audioTrack, audioSettings, onAudioSe
     track.attach(videoRef.current);
     return () => { track.detach(videoRef.current!); };
   }, [track]);
-  return <div className="video-tile" data-stream-id={streamId} onClick={onFocus} onDoubleClick={(event) => void toggleFullscreen(event.currentTarget)} onContextMenu={(event) => { event.preventDefault(); setAudioMenuOpen(true); }}><video ref={videoRef} autoPlay playsInline /><div className="tile-gradient" /><div className="tile-caption"><span>{name || identity}</span><b>AO VIVO</b></div><div className="tile-actions"><button onClick={(event) => { event.stopPropagation(); setAudioMenuOpen(true); }}>🔊</button><button onClick={(event) => { event.stopPropagation(); onFocus(); }}>◉</button><button onClick={(event) => { event.stopPropagation(); void toggleFullscreen(event.currentTarget.parentElement?.parentElement!); }}>⛶</button></div>{audioMenuOpen && <div className="audio-context-menu" role="menu" onClick={(event) => event.stopPropagation()} onContextMenu={(event) => event.preventDefault()}><strong>Áudio de {name || identity}</strong>{audioTrack ? <><button type="button" onClick={() => onAudioSettings({ volume, muted: !muted })}>{muted ? 'Ativar áudio' : 'Mutar'}</button><label>Volume<input aria-label={`Volume da transmissão de ${name || identity}`} type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} onChange={(event) => onAudioSettings({ volume: Number(event.target.value), muted: false })} /></label></> : <span className="audio-unavailable">Esta transmissão ainda não tem áudio.</span>}<button type="button" onClick={() => setAudioMenuOpen(false)}>Fechar</button></div>}</div>;
+
+  return (
+    <div
+      className="video-tile"
+      data-stream-id={streamId}
+      onClick={onFocus}
+      onDoubleClick={(event) => void toggleFullscreen(event.currentTarget)}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        setAudioMenuOpen(true);
+      }}
+    >
+      <video ref={videoRef} autoPlay playsInline />
+      <div className="tile-gradient" />
+      <div className="tile-caption">
+        <span>{name || identity}</span>
+        <b>AO VIVO</b>
+      </div>
+      <div className="tile-actions">
+        <button
+          onClick={(event) => {
+            event.stopPropagation();
+            setAudioMenuOpen(true);
+          }}
+          aria-label="Configurações de áudio"
+        >
+          🔊
+        </button>
+        <button
+          onClick={(event) => {
+            event.stopPropagation();
+            onFocus();
+          }}
+          aria-label="Focar neste vídeo"
+        >
+          ◉
+        </button>
+        <button
+          onClick={(event) => {
+            event.stopPropagation();
+            void toggleFullscreen(event.currentTarget.parentElement?.parentElement!);
+          }}
+          aria-label="Alternar tela cheia"
+        >
+          ⛶
+        </button>
+      </div>
+      {audioMenuOpen && (
+        <div
+          className="audio-context-menu"
+          role="menu"
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <strong>Áudio de {name || identity}</strong>
+          {audioTrack ? (
+            <>
+              <button
+                type="button"
+                onClick={() => onAudioSettings({ volume, muted: !muted })}
+              >
+                {muted ? 'Ativar áudio' : 'Mutar'}
+              </button>
+              <label>
+                Volume
+                <input
+                  aria-label={`Volume da transmissão de ${name || identity}`}
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={muted ? 0 : volume}
+                  onChange={(event) => onAudioSettings({ volume: Number(event.target.value), muted: false })}
+                />
+              </label>
+            </>
+          ) : (
+            <span className="audio-unavailable">Esta transmissão ainda não tem áudio.</span>
+          )}
+          <button
+            type="button"
+            onClick={() => setAudioMenuOpen(false)}
+          >
+            Fechar
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 async function toggleFullscreen(element: HTMLElement): Promise<void> {
