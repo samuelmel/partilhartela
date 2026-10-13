@@ -11,21 +11,6 @@ import {
 } from 'livekit-client';
 import './styles.css';
 
-declare global {
-  interface Window {
-    partilharTela?: {
-      getSources: () => Promise<CaptureSource[]>;
-      getAudioProcesses: () => Promise<Array<{ title: string; processId: string }>>;
-      setCaptureSource: (sourceId: string) => Promise<void>;
-      copyText: (text: string) => Promise<void>;
-      startApplicationAudio: (processId: string) => Promise<void>;
-      startSystemAudioExcluding: (processId: string) => Promise<void>;
-      stopApplicationAudio: () => Promise<void>;
-      onAudioData: (listener: (chunk: Uint8Array) => void) => () => void;
-    };
-  }
-}
-
 type ViewMode = 'home' | 'join' | 'presenter' | 'viewer';
 type AudioMode = 'none' | 'system' | 'application' | 'system-excluding-discord';
 
@@ -90,7 +75,7 @@ async function postJson<T = any>(endpoint: string, data: any): Promise<T> {
       body: JSON.stringify(data)
     });
   } catch {
-    throw new Error('Servidor local indisponível. Execute "npm run dev:desktop" na pasta do projeto.');
+    throw new Error(`Não foi possível acessar o servidor de salas (${tokenServer}). Verifique sua internet ou tente novamente.`);
   }
 
   if (!response.ok) {
@@ -1302,7 +1287,9 @@ export function App() {
   const currentQualitySetting = qualities[quality];
   const canShare = view === 'presenter' || view === 'viewer';
   const allStreams: VideoStreamItem[] = [
-    ...(isSharing ? [{ id: 'local', name: nickname.trim() || 'Você', track: null as any, local: true }] : []),
+    ...(isSharing
+      ? [{ id: 'local', identity: 'local', name: nickname.trim() || 'Você', track: null as any, local: true }]
+      : []),
     ...videoStreams.map((v) => ({ ...v, local: false }))
   ];
   const focusedStream = allStreams.find((s) => s.id === focusedStreamId);
