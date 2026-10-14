@@ -221,10 +221,14 @@ async function readWebRtcStats(
 
 async function toggleFullscreen(element: HTMLElement | null) {
   if (!element) return;
-  if (document.fullscreenElement) {
-    await document.exitFullscreen();
-  } else {
-    await element.requestFullscreen();
+  try {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+    } else {
+      await element.requestFullscreen();
+    }
+  } catch (error) {
+    console.warn('[PartilharTela] Não foi possível alternar tela cheia:', error);
   }
 }
 

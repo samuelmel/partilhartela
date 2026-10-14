@@ -25,6 +25,13 @@ function createWindow(): void {
   });
   mainWindow = window;
 
+  window.webContents.on('enter-html-full-screen', () => {
+    window.setFullScreen(true);
+  });
+  window.webContents.on('leave-html-full-screen', () => {
+    window.setFullScreen(false);
+  });
+
   if (isDevelopment) {
     void window.loadURL('http://localhost:5173');
     window.webContents.openDevTools();
