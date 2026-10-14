@@ -1,4 +1,5 @@
-import { app, BrowserWindow, clipboard, desktopCapturer, ipcMain, session } from 'electron';
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, session, type MessageBoxOptions } from 'electron';
+import { autoUpdater } from 'electron-updater';
 import loopback, { type LoopbackCapture } from 'loopback-capture';
 import { execFile } from 'node:child_process';
 import path from 'node:path';
@@ -38,6 +39,37 @@ function createWindow(): void {
   } else {
     void window.loadFile(path.join(__dirname, '../../dist/index.html'));
   }
+}
+
+function configureAutoUpdater(): void {
+  if (!app.isPackaged) return;
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('error', (error) => {
+    console.error('[PartilharTela] Falha ao verificar atualização:', error);
+  });
+  autoUpdater.on('update-downloaded', () => {
+    const message: MessageBoxOptions = {
+      type: 'info',
+      title: 'Atualização pronta',
+      message: 'Uma nova versão do PartilharTela foi baixada.',
+      detail: 'Reinicie o aplicativo agora para aplicar a atualização.',
+      buttons: ['Reiniciar agora', 'Depois'],
+      defaultId: 0,
+      cancelId: 1
+    };
+    const result = mainWindow
+      ? dialog.showMessageBox(mainWindow, message)
+      : dialog.showMessageBox(message);
+    void result.then(({ response }) => {
+      if (response === 0) {
+        autoUpdater.quitAndInstall();
+      }
+    });
+  });
+
+  void autoUpdater.checkForUpdatesAndNotify();
 }
 
 app.commandLine.appendSwitch('enable-features', 'WebRtcHideLocalIpsWithMdns');
@@ -128,6 +160,7 @@ app.whenReady().then(() => {
   });
 
   createWindow();
+  configureAutoUpdater();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

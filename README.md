@@ -53,13 +53,27 @@ npm run dist
 
 O arquivo instalável será gerado automaticamente em:
 ```text
-apps/desktop/release/PartilharTela Setup 1.0.0.exe
+apps/desktop/release/PartilharTela Setup 1.0.1.exe
 ```
 
 ### Onde hospedar para as pessoas baixarem:
 1. **GitHub Releases (Recomendado)**: Crie uma nova Release na página do seu repositório no GitHub (`v1.0.0`) e faça o upload do arquivo `.exe`.
+
+### Atualizações automáticas do desktop
+
+O instalador NSIS verifica novas versões no GitHub Releases ao abrir o aplicativo. Quando uma versão nova estiver disponível, ela será baixada em segundo plano e o usuário poderá reiniciar o app para concluir a instalação.
+
+Para publicar uma atualização:
+
+1. Incremente a versão em `apps/desktop/package.json` (por exemplo, `1.0.1`).
+2. Gere o instalador com `npm run dist`.
+3. Crie uma GitHub Release com uma tag igual à versão, como `v1.0.1`.
+4. Anexe o `.exe`, o arquivo `latest.yml` e o arquivo `.blockmap` gerados em `apps/desktop/release`.
+
 2. **Google Drive / OneDrive / Dropbox**: Suba o `.exe` e compartilhe o link de download direto com seus usuários.
 3. **Página Web**: Hospede o `apps/web` (na Vercel, Netlify ou Render) e adicione um botão "Baixar para Windows" apontando para o arquivo `.exe`.
+
+Não basta trocar apenas o `.exe`: o `latest.yml` informa ao atualizador qual versão e quais arquivos devem ser baixados.
 
 ---
 
