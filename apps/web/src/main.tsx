@@ -14,6 +14,18 @@ const tokenServer = import.meta.env.VITE_TOKEN_SERVER_URL ?? 'http://localhost:8
 type VideoItem = { id: string; identity: string; name: string; track: RemoteVideoTrack };
 type AudioItem = { identity: string; track: RemoteAudioTrack };
 
+async function toggleFullscreen(element: HTMLElement): Promise<void> {
+  try {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+    } else {
+      await element.requestFullscreen();
+    }
+  } catch {
+    // Alguns navegadores bloqueiam fullscreen quando a ação não veio de um clique.
+  }
+}
+
 function App(): JSX.Element {
   const [code, setCode] = useState(new URLSearchParams(window.location.search).get('room')?.toUpperCase() ?? '');
   const [nickname, setNickname] = useState('');
@@ -291,6 +303,7 @@ function App(): JSX.Element {
 
 function VideoTile({ item, onFocus }: { item: VideoItem; onFocus: () => void }): JSX.Element {
   const ref = useRef<HTMLVideoElement>(null);
+  const tileRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const video = ref.current;
@@ -305,10 +318,10 @@ function VideoTile({ item, onFocus }: { item: VideoItem; onFocus: () => void }):
   }, [item.track]);
 
   return (
-    <button
+    <div
+      ref={tileRef}
       className="tile"
-      onClick={onFocus}
-      aria-label={`Vídeo de ${item.name}`}
+      onDoubleClick={(event) => void toggleFullscreen(event.currentTarget)}
     >
       <video
         ref={ref}
@@ -319,7 +332,25 @@ function VideoTile({ item, onFocus }: { item: VideoItem; onFocus: () => void }):
         {item.name}
         <b>AO VIVO</b>
       </span>
-    </button>
+      <div className="tile-controls">
+        <button
+          type="button"
+          onClick={onFocus}
+          aria-label={`Ampliar vídeo de ${item.name}`}
+        >
+          ◉
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (tileRef.current) void toggleFullscreen(tileRef.current);
+          }}
+          aria-label="Alternar tela cheia"
+        >
+          ⛶
+        </button>
+      </div>
+    </div>
   );
 }
 
