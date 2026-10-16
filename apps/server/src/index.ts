@@ -8,6 +8,10 @@ import { AccessToken } from 'livekit-server-sdk';
 const app = Fastify({ logger: true });
 const port = Number(process.env.PORT ?? process.env.SERVER_PORT ?? 8787);
 const livekitUrl = process.env.LIVEKIT_URL ?? 'ws://localhost:7880';
+if (process.env.NODE_ENV === 'production' && (!process.env.LIVEKIT_API_KEY || !process.env.LIVEKIT_API_SECRET)) {
+  console.error('LIVEKIT_API_KEY e LIVEKIT_API_SECRET são obrigatórias em produção.');
+  process.exit(1);
+}
 const apiKey = process.env.LIVEKIT_API_KEY ?? 'devkey';
 const apiSecret = process.env.LIVEKIT_API_SECRET ?? 'secret';
 const createCode = customAlphabet('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 6);
