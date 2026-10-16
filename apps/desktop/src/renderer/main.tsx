@@ -999,6 +999,7 @@ export function App() {
         });
       }
     } catch {
+      window.clearInterval(statsInterval);
       room.disconnect();
       throw new Error(
         'Servidor de mídia LiveKit indisponível. Inicie o Docker Desktop e execute "docker compose -f infra\\docker-compose.yml up -d".'
