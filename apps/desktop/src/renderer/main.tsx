@@ -136,15 +136,31 @@ async function createPcmAudio(starter: () => Promise<void>): Promise<LocalAudioT
     }
   });
 
-  await starter();
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    unsubscribe();
+    void audioContext.close();
+  };
+
+  try {
+    await starter();
+  } catch (err) {
+    release();
+    throw err;
+  }
 
   const track = destination.stream.getAudioTracks()[0];
   const localTrack = new LocalAudioTrack(track);
 
-  track.addEventListener('ended', () => {
-    unsubscribe();
-    void audioContext.close();
-  });
+  // MediaStreamTrack.stop() não dispara 'ended'; libera o contexto quando a track for parada.
+  track.addEventListener('ended', release);
+  const stopTrack = localTrack.stop.bind(localTrack);
+  localTrack.stop = () => {
+    release();
+    stopTrack();
+  };
 
   return localTrack;
 }
