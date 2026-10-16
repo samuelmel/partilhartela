@@ -22,6 +22,8 @@ artefatos certos quebra a atualização para todos os usuários.
 7. Só com autorização do usuário: `git push origin master --follow-tags` e
    `gh release create vX.Y.Z --title "vX.Y.Z" --notes-file <notas.md>` anexando o `.exe`, o `.blockmap` e o `latest.yml`.
    Pré-requisito: `gh auth status` ok. Sem `gh`, pare e avise.
+   **Renomeie antes de subir**: o `latest.yml` referencia `PartilharTela-Setup-X.Y.Z.exe` (hífens), mas o
+   GitHub troca espaços por pontos no upload. Copie o `.exe` e o `.blockmap` para nomes com hífen, senão o auto-update não acha o arquivo.
 
 ## Conferir
 
