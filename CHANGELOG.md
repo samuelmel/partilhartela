@@ -2,6 +2,28 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 
+## [1.1.0] - 2026-10-16
+
+### Novidades
+
+- **web**: transmissão de tela direto do navegador (criar sala, entrar por código ou link `?room=`, compartilhar a tela). Som da aba ou do sistema no Chrome e no Edge; celulares e navegadores sem suporte ficam só assistindo, com explicação.
+- **web**: página inicial com comparação navegador × app e botão "Baixar para Windows" apontando para as Releases.
+- **desktop e web**: novo visual das salas, com código da sala em destaque, lista de quem transmite e assiste, painel de conexão e dock de transmissão.
+- **desktop e web**: quem transmite pode mutar e desmutar o som sem parar o vídeo.
+- **desktop e web**: cada espectador ajusta o próprio volume (0–100%) e muta o som só para si.
+- **desktop**: botão "Sair da sala"; trocar o som ou a qualidade durante a transmissão já aplica.
+
+### Correções
+
+- **desktop**: botão de tela cheia não funcionava (o Electron negava a permissão `fullscreen`); Esc agora sai da tela cheia.
+- **desktop**: títulos de janela com acento ou emoji apareciam como `?`, o que também atrapalhava a detecção do áudio por aplicativo.
+- **desktop**: fechar a janela transmitida encerra também o áudio capturado.
+
+### Manutenção
+
+- **server**: tokens só permitem publicar a tela e o áudio dela (`canPublishSources`).
+- Componentes de sala compartilhados em `shared/ui/` e teste ponta a ponta da web (`npm run test:e2e:web`).
+
 ## [1.0.4] - 2026-10-16
 
 ### Correções
