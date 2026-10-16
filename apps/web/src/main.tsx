@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
+  DisconnectReason,
   RemoteAudioTrack,
   RemoteVideoTrack,
   Room,
@@ -47,6 +48,7 @@ function App(): JSX.Element {
   async function enterRoom(): Promise<void> {
     setError('');
     setLoading(true);
+    let room: Room | undefined;
 
     try {
       const normalized = code.trim().toUpperCase();
@@ -78,7 +80,7 @@ function App(): JSX.Element {
       }
 
       // Connect to LiveKit room
-      const room = new Room({ adaptiveStream: true, dynacast: true });
+      room = new Room({ adaptiveStream: true, dynacast: true });
 
       // Set up event listeners
       room.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
@@ -112,10 +114,13 @@ function App(): JSX.Element {
 
       room.on(RoomEvent.Reconnecting, () => setConnection('Reconectando...'));
       room.on(RoomEvent.Reconnected, () => setConnection('Conectado'));
-      room.on(RoomEvent.Disconnected, () => {
+      room.on(RoomEvent.Disconnected, (reason) => {
         setConnection('Desconectado');
         setConnected(false);
-        setError('Conexão perdida. Tentando reconectar...');
+        // Sair pelo botão também dispara Disconnected; só avisa em perdas reais.
+        if (reason !== DisconnectReason.CLIENT_INITIATED) {
+          setError('Conexão perdida. Entre novamente na sala.');
+        }
       });
 
       await room.connect(data.livekitUrl, data.token, { autoSubscribe: true });
@@ -131,7 +136,7 @@ function App(): JSX.Element {
         setAudioEnabled(false);
       }
     } catch (reason) {
-      roomRef.current?.disconnect();
+      room?.disconnect();
       setError(reason instanceof Error ? reason.message : 'Não foi possível conectar à sala. Verifique seu conexão e tente novamente.');
     } finally {
       setLoading(false);
