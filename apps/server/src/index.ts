@@ -15,7 +15,15 @@ if (process.env.NODE_ENV === 'production' && (!process.env.LIVEKIT_API_KEY || !p
 const apiKey = process.env.LIVEKIT_API_KEY ?? 'devkey';
 const apiSecret = process.env.LIVEKIT_API_SECRET ?? 'secret';
 const createCode = customAlphabet('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 6);
-const rooms = new Set<string>();
+// Código da sala -> instante de expiração (ms). Sem expiração o conjunto crescia sem limite.
+const ROOM_TTL_MS = 12 * 60 * 60 * 1000;
+const rooms = new Map<string, number>();
+
+function pruneExpiredRooms(now = Date.now()): void {
+  for (const [code, expiresAt] of rooms) {
+    if (expiresAt <= now) rooms.delete(code);
+  }
+}
 
 // Validation functions
 function isValidRoomCode(code: string): boolean {
@@ -41,8 +49,9 @@ app.get('/health', async () => ({
 // Room creation endpoint
 app.post<{ Body: { nickname?: string } }>('/rooms', async (request, reply) => {
   try {
+    pruneExpiredRooms();
     const code = createCode();
-    rooms.add(code);
+    rooms.set(code, Date.now() + ROOM_TTL_MS);
     const nickname = normalizeNickname(request.body?.nickname);
 
     const token = new AccessToken(apiKey, apiSecret, {
@@ -89,7 +98,9 @@ app.post<{ Params: { code: string }; Body: { nickname?: string } }>('/rooms/:cod
     }
 
     // Check if room exists
-    if (!rooms.has(code)) {
+    const expiresAt = rooms.get(code);
+    if (expiresAt === undefined || expiresAt <= Date.now()) {
+      rooms.delete(code);
       return reply.code(404).send({
         error: 'Sala inexistente ou expirada. Solicite um novo código ao apresentador.'
       });
