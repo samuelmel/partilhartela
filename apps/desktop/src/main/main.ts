@@ -5,6 +5,7 @@ import { execFile } from 'node:child_process';
 import path from 'node:path';
 
 const isDevelopment = !app.isPackaged;
+const devServerUrl = 'http://localhost:5173';
 let selectedCaptureSourceId: string | undefined;
 let audioCapture: LoopbackCapture | undefined;
 let mainWindow: BrowserWindow | undefined;
@@ -33,8 +34,15 @@ function createWindow(): void {
     window.setFullScreen(false);
   });
 
+  // Impede que o renderer (com a bridge do preload) navegue para conteúdo externo ou abra janelas.
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.on('will-navigate', (event, url) => {
+    const allowed = isDevelopment ? url.startsWith(devServerUrl) : url.startsWith('file://');
+    if (!allowed) event.preventDefault();
+  });
+
   if (isDevelopment) {
-    void window.loadURL('http://localhost:5173');
+    void window.loadURL(devServerUrl);
     window.webContents.openDevTools();
   } else {
     void window.loadFile(path.join(__dirname, '../../dist/index.html'));
