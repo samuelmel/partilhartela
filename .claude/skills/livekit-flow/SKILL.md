@@ -9,7 +9,7 @@ description: Use ao mexer em criação de sala, tokens/permissões LiveKit, cone
 
 - Código: `customAlphabet('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 6)`; sala LiveKit = `partilhartela-<CODIGO>` (`roomNameFromCode`).
 - Salas existem só no Map `rooms` em memória, com expiração (`ROOM_TTL_MS`). `POST /rooms/:code/token` responde 404 para códigos desconhecidos/expirados.
-- Tokens: `AccessToken(apiKey, apiSecret, { identity, name, ttl: '15m' })`. Identity = `<CODIGO>-presenter|viewer-<uuid>`. Ambos têm `canPublish` (viewer no desktop também compartilha).
+- Tokens: `AccessToken(apiKey, apiSecret, { identity, name, ttl: '15m' })`. Identity = `<CODIGO>-presenter|viewer-<uuid>`. Ambos têm `canPublish` restrito por `canPublishSources` a tela + áudio da tela (desktop e web transmitem). Nova fonte publicada = adicionar aqui.
 - Resposta dos dois endpoints: `{ code, roomName, token, livekitUrl, expiresIn }` — desktop e web dependem desse formato.
 - Rate limit global 30 req/min por IP; `nickname` é cortado em 32 chars (`normalizeNickname`).
 
@@ -21,10 +21,17 @@ description: Use ao mexer em criação de sala, tokens/permissões LiveKit, cone
 - Handlers de `RoomEvent` são registrados uma vez por conexão: não leia estado React dentro deles (closure velho); use refs ou o `DisconnectReason`.
 - Estatísticas: `readWebRtcStats` lê `room.engine.pcManager` (API interna, `any`) a cada 2 s.
 
-## Web (`apps/web/src/main.tsx`)
+## Estado compartilhado (`shared/ui/roomState.ts`)
 
-Só assina tracks (não publica). Lê `?room=` da URL. Áudio pode exigir clique (`room.startAudio()` via botão "Ativar áudio").
+- `useRoomSnapshot(room)` relê streams (`ScreenShare`), áudio (`ScreenShareAudio` por identity), membros e o share local a cada `RoomEvent` relevante. Não mantenha listas paralelas de tracks na UI.
+- `setShareAudioMuted` usa `publication.mute()/unmute()`; o desktop reaplica o mute ao republicar (`shareAudioMutedRef`).
+
+## Web (`apps/web/src`)
+
+- `ShareDock` publica com `setScreenShareEnabled(true, captureOpts, publishOpts)`; parar = `setScreenShareEnabled(false)`. Fim pelo navegador: SDK despublica no `ended`; o dock remove áudio órfão.
+- `capture.ts` decide suporte (celular/sem HTTPS/sem `getDisplayMedia` = só assistir) e traduz erros (`NotAllowedError` = cancelado).
+- Lê/grava `?room=`. Áudio bloqueado: `useAudioPlayback` + botão "Ativar som".
 
 ## Testar ponta a ponta
 
-LiveKit local (`docker compose -f infra/docker-compose.yml up -d`) + `npm run dev`; crie a sala no Electron e entre pelo `npm run dev:web` em outra aba com o código.
+LiveKit local (`docker compose -f infra/docker-compose.yml up -d`) + `npm run dev`; crie a sala no Electron e entre pelo `npm run dev:web` em outra aba com o código. Web automatizada: `npm run test:e2e:web`.

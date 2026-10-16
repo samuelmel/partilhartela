@@ -1,6 +1,12 @@
 import type { DesktopSource } from '../preload/preload';
 
 declare global {
+  interface ImportMetaEnv {
+    readonly VITE_TOKEN_SERVER_URL?: string;
+    /** URL pública do viewer web; quando definida, "Copiar" gera link ?room=CODIGO em vez de só o código. */
+    readonly VITE_WEB_APP_URL?: string;
+  }
+
   interface Window {
     partilharTela: {
       getSources: () => Promise<DesktopSource[]>;

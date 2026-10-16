@@ -3,7 +3,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import { customAlphabet } from 'nanoid';
-import { AccessToken } from 'livekit-server-sdk';
+import { AccessToken, TrackSource } from 'livekit-server-sdk';
 
 const app = Fastify({ logger: true });
 const port = Number(process.env.PORT ?? process.env.SERVER_PORT ?? 8787);
@@ -35,6 +35,9 @@ function normalizeNickname(value: unknown): string {
   return nickname.slice(0, 32) || 'Visitante';
 }
 
+// Desktop e web só publicam a tela e o áudio dela; câmera e microfone ficam bloqueados no token.
+const shareSources = [TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO];
+
 function roomNameFromCode(code: string): string {
   return `partilhartela-${code.toUpperCase()}`;
 }
@@ -64,6 +67,7 @@ app.post<{ Body: { nickname?: string } }>('/rooms', async (request, reply) => {
       room: roomNameFromCode(code),
       roomJoin: true,
       canPublish: true,
+      canPublishSources: shareSources,
       canPublishData: true,
       canSubscribe: true
     });
@@ -118,6 +122,7 @@ app.post<{ Params: { code: string }; Body: { nickname?: string } }>('/rooms/:cod
       room: roomNameFromCode(code),
       roomJoin: true,
       canPublish: true,
+      canPublishSources: shareSources,
       canPublishData: true,
       canSubscribe: true
     });

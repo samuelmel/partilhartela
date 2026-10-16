@@ -16,7 +16,7 @@ function createWindow(): void {
     height: 820,
     minWidth: 900,
     minHeight: 600,
-    backgroundColor: '#111318',
+    backgroundColor: '#232429',
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
       contextIsolation: true,
@@ -87,12 +87,16 @@ app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-accelerated-video-decode');
 app.commandLine.appendSwitch('enable-accelerated-video-encode');
 
+// 'fullscreen' precisa estar aqui: sem ela o Electron rejeita element.requestFullscreen()
+// e o botão de tela cheia do palco não fazia nada.
+const allowedPermissions = new Set(['media', 'display-capture', 'fullscreen']);
+
 app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    callback(permission === 'media' || permission === 'display-capture');
+    callback(allowedPermissions.has(permission));
   });
   session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
-    return permission === 'media' || permission === 'display-capture';
+    return allowedPermissions.has(permission);
   });
 
   session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
@@ -185,7 +189,8 @@ async function findApplicationWindows(): Promise<Array<{ title: string; processI
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      'Get-Process | Where-Object { $_.MainWindowTitle } | Select-Object MainWindowTitle,Id | ConvertTo-Json -Compress'
+      // UTF-8 explícito: sem isso títulos com acento/emoji chegam como '?'.
+      '[Console]::OutputEncoding = [Text.Encoding]::UTF8; Get-Process | Where-Object { $_.MainWindowTitle } | Select-Object MainWindowTitle,Id | ConvertTo-Json -Compress'
     ], { windowsHide: true }, (_error, stdout) => {
       try {
         const parsed: unknown = JSON.parse(stdout);

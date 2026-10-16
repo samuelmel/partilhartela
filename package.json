@@ -21,7 +21,8 @@
     "dist": "npm --workspace apps/desktop run dist",
     "typecheck": "npm run typecheck:server && npm run typecheck:desktop",
     "typecheck:server": "npm --workspace apps/server run typecheck",
-    "typecheck:desktop": "npm --workspace apps/desktop run typecheck"
+    "typecheck:desktop": "npm --workspace apps/desktop run typecheck",
+    "test:e2e:web": "node scripts/e2e-web.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"
