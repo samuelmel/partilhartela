@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
+  DisconnectReason,
   LocalAudioTrack,
   LocalVideoTrack,
   RemoteAudioTrack,
@@ -980,13 +981,14 @@ export function App() {
 
     room.on(RoomEvent.Reconnecting, () => setConnectionState('Reconectando...'));
     room.on(RoomEvent.Reconnected, () => setConnectionState('Conectado'));
-    room.on(RoomEvent.Disconnected, () => {
+    room.on(RoomEvent.Disconnected, (reason) => {
       window.clearInterval(statsInterval);
       setConnectionState('Desconectado');
       setParticipants([]);
       setAudioTracks({});
       setAudioSettings({});
-      if (view !== 'home') {
+      // `view` aqui é o valor do momento da conexão (home/join); use o motivo em vez dele.
+      if (reason !== DisconnectReason.CLIENT_INITIATED) {
         setErrorMessage('A conexão foi perdida. Tente entrar novamente.');
       }
     });
