@@ -394,8 +394,9 @@ select {
 }
 
 .brand-mark {
-  color: var(--text-2);
   flex: none;
+  border-radius: 7px;
+  object-fit: cover;
 }
 
 @media (prefers-reduced-motion: reduce) {

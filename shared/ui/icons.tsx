@@ -1,4 +1,5 @@
 import type { JSX, ReactNode } from 'react';
+import logoUrl from './logo.png';
 
 // Um único traço (24px, 1.8) para todos os ícones da interface.
 function Svg({ children, size = 20 }: { children: ReactNode; size?: number }): JSX.Element {
@@ -77,13 +78,7 @@ export const RefreshIcon = ({ size }: IconProps) => (
   <Svg size={size}><path d="M20 11a8 8 0 0 0-14.6-4.5L3 9M3 4v5h5M4 13a8 8 0 0 0 14.6 4.5L21 15M21 20v-5h-5" /></Svg>
 );
 
-/** Marca: duas telas sobrepostas, a da frente sendo passada adiante. */
+/** Marca: o logo do app (mesma imagem do ícone do instalador e do favicon). */
 export function BrandMark({ size = 28 }: IconProps): JSX.Element {
-  return (
-    <svg className="brand-mark" width={size} height={size} viewBox="0 0 28 28" aria-hidden="true" focusable="false">
-      <rect x="2" y="3" width="17" height="12" rx="2.5" fill="none" stroke="currentColor" strokeWidth="2" opacity=".55" />
-      <rect x="9" y="11" width="17" height="12" rx="2.5" fill="var(--accent)" />
-      <path d="M15.5 14.5 19.5 17l-4 2.5Z" fill="#fff" />
-    </svg>
-  );
+  return <img className="brand-mark" src={logoUrl} width={size} height={size} alt="" aria-hidden="true" />;
 }
