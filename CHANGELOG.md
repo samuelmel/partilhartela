@@ -2,6 +2,15 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 
+## [1.2.0] - 2026-10-18
+
+### Novidades
+
+- **desktop e web**: novo logo do app (ícone do instalador, da janela, favicon da web e marca no cabeçalho).
+- **desktop e web**: som de aviso, no estilo do Discord, quando alguém começa ou para de compartilhar a tela. Trocar qualidade ou codificador durante a transmissão não toca nada.
+- **desktop**: escolha do codificador de vídeo (H.264, VP8, VP9, AV1) na engrenagem do dock, filtrada pelo que o computador consegue enviar.
+- **desktop**: estatísticas de quem transmite mostram FPS da captura, motivo de limitação de qualidade, tempo de codificação e banda disponível.
+
 ## [1.1.0] - 2026-10-16
 
 ### Novidades
