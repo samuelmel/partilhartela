@@ -33,6 +33,7 @@ import {
 } from '../../../../shared/ui/roomState';
 import { RoomSidebar } from '../../../../shared/ui/RoomSidebar';
 import { Stage } from '../../../../shared/ui/Stage';
+import { announceScreenRepublish, attachShareSounds } from '../../../../shared/ui/shareSounds';
 import { leaveFullscreen } from '../../../../shared/ui/useFullscreen';
 import '../../../../shared/ui/base.css';
 import '../../../../shared/ui/room.css';
@@ -798,6 +799,8 @@ export function App() {
       );
     }
 
+    // Depois do connect: transmissões que já estavam na sala não tocam aviso.
+    attachShareSounds(nextRoom);
     roomRef.current = nextRoom;
     setRoom(nextRoom);
     setRoomCode(data.code);
@@ -873,6 +876,8 @@ export function App() {
     let mediaStream: MediaStream | undefined;
 
     try {
+      // Já transmitindo = republicação (qualidade, codec ou fonte): avisa a sala para não tocar "parou"/"começou".
+      if (localVideoTrackRef.current) await announceScreenRepublish(currentRoom);
       await stopApplicationAudio();
       await unpublishLocalTrack(localVideoTrackRef, currentRoom);
       await unpublishLocalTrack(localAudioTrackRef, currentRoom);

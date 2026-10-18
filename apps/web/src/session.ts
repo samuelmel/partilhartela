@@ -1,5 +1,6 @@
 import { Room } from 'livekit-client';
 import { describeConnectError } from '../../../shared/ui/roomState';
+import { attachShareSounds } from '../../../shared/ui/shareSounds';
 
 export const tokenServer = import.meta.env.VITE_TOKEN_SERVER_URL ?? 'http://localhost:8787';
 // Página "latest" das Releases: o nome do .exe muda a cada versão, então não há link direto estável.
@@ -39,6 +40,8 @@ export async function connectRoom(grant: RoomGrant): Promise<Room> {
   });
   try {
     await room.connect(grant.livekitUrl, grant.token, { autoSubscribe: true });
+    // Depois do connect: transmissões que já estavam na sala não tocam aviso.
+    attachShareSounds(room);
     return room;
   } catch (error) {
     console.warn('[PartilharTela] Falha ao conectar no LiveKit:', error);
