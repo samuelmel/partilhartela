@@ -122,6 +122,13 @@
   color: var(--text-3);
 }
 
+.dock-hint {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
 .dock-state-text {
   overflow: hidden;
   text-overflow: ellipsis;
