@@ -2,6 +2,12 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 
+## [1.2.1] - 2026-10-18
+
+### Visual
+
+- **desktop e web**: logo trocado pelo Patrick com o galão na cabeça (ícone do instalador, da janela, favicon e cabeçalho), agora com fundo transparente.
+
 ## [1.2.0] - 2026-10-18
 
 ### Novidades
