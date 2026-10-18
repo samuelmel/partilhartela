@@ -13,6 +13,7 @@ import {
   AlertIcon,
   BrandMark,
   CloseIcon,
+  GearIcon,
   RefreshIcon,
   ScreenIcon,
   StatsIcon,
@@ -70,6 +71,45 @@ const tokenServer = import.meta.env.VITE_TOKEN_SERVER_URL ?? 'http://localhost:8
 const webAppUrl = import.meta.env.VITE_WEB_APP_URL?.replace(/\/+$/, '');
 const codePattern = /^[A-Z0-9]{6}$/;
 const nicknameKey = 'partilhartela.nickname';
+const videoCodecKey = 'partilhartela.videoCodec';
+
+type VideoCodecKey = 'h264' | 'vp8' | 'vp9' | 'av1';
+
+const videoCodecs: Array<{ value: VideoCodecKey; label: string; mimeType: string }> = [
+  { value: 'h264', label: 'H.264', mimeType: 'video/h264' },
+  { value: 'vp8', label: 'VP8', mimeType: 'video/vp8' },
+  { value: 'vp9', label: 'VP9', mimeType: 'video/vp9' },
+  { value: 'av1', label: 'AV1', mimeType: 'video/av1' }
+];
+
+function isVideoCodecKey(value: string): value is VideoCodecKey {
+  return videoCodecs.some((c) => c.value === value);
+}
+
+/** Codecs que este Electron consegue enviar via WebRTC. */
+function supportedVideoCodecs(): Set<VideoCodecKey> {
+  const mimeTypes = new Set(
+    (RTCRtpSender.getCapabilities?.('video')?.codecs ?? []).map((c) => c.mimeType.toLowerCase())
+  );
+  return new Set(videoCodecs.filter((c) => mimeTypes.has(c.mimeType)).map((c) => c.value));
+}
+
+function readVideoCodec(): VideoCodecKey {
+  try {
+    const value = window.localStorage.getItem(videoCodecKey) ?? '';
+    return isVideoCodecKey(value) ? value : 'h264';
+  } catch {
+    return 'h264';
+  }
+}
+
+function storeVideoCodec(value: VideoCodecKey): void {
+  try {
+    window.localStorage.setItem(videoCodecKey, value);
+  } catch {
+    // Sem armazenamento: volta para H.264 na próxima abertura.
+  }
+}
 
 function readNickname(): string {
   try {
@@ -506,11 +546,13 @@ function Dock({
   busy,
   quality,
   motion,
+  videoCodec,
   audioMode,
   audioProcesses,
   excludedAudioProcessId,
   onQuality,
   onMotion,
+  onVideoCodec,
   onAudio,
   onExcludedAudio,
   onShare,
@@ -522,11 +564,13 @@ function Dock({
   busy: 'publish' | 'stop' | 'audio' | null;
   quality: QualityKey;
   motion: boolean;
+  videoCodec: VideoCodecKey;
   audioMode: AudioMode;
   audioProcesses: Array<{ title: string; processId: string }>;
   excludedAudioProcessId: string;
   onQuality: (q: QualityKey) => void;
   onMotion: (m: boolean) => void;
+  onVideoCodec: (c: VideoCodecKey) => void;
   onAudio: (m: AudioMode) => void;
   onExcludedAudio: (pid: string) => void;
   onShare: () => void;
@@ -535,6 +579,8 @@ function Dock({
 }) {
   const sharing = Boolean(local.video);
   const disabled = busy !== null;
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [codecSupport] = useState(supportedVideoCodecs);
 
   return (
     <footer className="dock" aria-label="Sua transmissão">
@@ -612,6 +658,28 @@ function Dock({
             </select>
           </label>
         )}
+        <button
+          type="button"
+          className="icon-btn"
+          aria-pressed={advancedOpen}
+          aria-label="Configurações avançadas"
+          title="Configurações avançadas"
+          onClick={() => setAdvancedOpen((open) => !open)}
+        >
+          <GearIcon size={18} />
+        </button>
+        {advancedOpen && (
+          <label className="dock-field">
+            <span>Codificador</span>
+            <select className="select select-sm" value={videoCodec} onChange={(e) => isVideoCodecKey(e.target.value) && onVideoCodec(e.target.value)} disabled={disabled}>
+              {videoCodecs.map((c) => (
+                <option key={c.value} value={c.value} disabled={!codecSupport.has(c.value)}>
+                  {codecSupport.has(c.value) ? c.label : `${c.label} (indisponível)`}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
     </footer>
   );
@@ -626,6 +694,7 @@ export function App() {
   const [errorMessage, setErrorMessage] = useState('');
   const [quality, setQuality] = useState<QualityKey>('1080p30');
   const [motion, setMotion] = useState(true);
+  const [videoCodec, setVideoCodec] = useState<VideoCodecKey>(readVideoCodec);
   const [audioMode, setAudioMode] = useState<AudioMode>('none');
   const [audioProcesses, setAudioProcesses] = useState<Array<{ title: string; processId: string }>>([]);
   const [excludedAudioProcessId, setExcludedAudioProcessId] = useState('');
@@ -649,6 +718,8 @@ export function App() {
   // Preferência de mute do apresentador; reaplicada quando a transmissão é republicada (qualidade, fonte).
   const shareAudioMutedRef = useRef(false);
 
+  const videoCodecRef = useRef(videoCodec);
+  videoCodecRef.current = videoCodec;
   const audioModeRef = useRef(audioMode);
   audioModeRef.current = audioMode;
   const excludedAudioProcessIdRef = useRef(excludedAudioProcessId);
@@ -881,14 +952,18 @@ export function App() {
         setErrorMessage('A fonte escolhida não entregou áudio; a transmissão segue só com a imagem.');
       }
 
+      const codec = videoCodecRef.current;
       await currentRoom.localParticipant.publishTrack(localVideoTrack, {
         source: Track.Source.ScreenShare,
         simulcast: false,
+        videoCodec: codec,
+        // VP9/AV1 usam SVC no LiveKit (padrão L3T3: 3 resoluções codificadas). L1T3 = uma resolução só, menos CPU.
+        ...(codec === 'vp9' || codec === 'av1' ? { scalabilityMode: 'L1T3' as const } : {}),
         videoEncoding: { maxBitrate: settings.bitrate, maxFramerate: settings.fps },
         degradationPreference: motion ? 'maintain-framerate' : 'maintain-resolution'
       });
 
-      console.info('[PartilharTela] Tela publicada no LiveKit.');
+      console.info('[PartilharTela] Tela publicada no LiveKit com codec', codec);
       setSelectedSourceId(sourceId);
       setIsShareModalOpen(false);
     } catch (err) {
@@ -1048,6 +1123,7 @@ export function App() {
           busy={busy}
           quality={quality}
           motion={motion}
+          videoCodec={videoCodec}
           audioMode={audioMode}
           audioProcesses={audioProcesses}
           excludedAudioProcessId={excludedAudioProcessId}
@@ -1059,6 +1135,12 @@ export function App() {
             setMotion(m);
             const track = localVideoTrackRef.current?.mediaStreamTrack;
             if (track) track.contentHint = m ? 'motion' : 'detail';
+          }}
+          onVideoCodec={(c) => {
+            setVideoCodec(c);
+            videoCodecRef.current = c;
+            storeVideoCodec(c);
+            if (sharing) void publishScreen(selectedSourceId);
           }}
           onAudio={(a) => {
             setAudioMode(a);
