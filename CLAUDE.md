@@ -26,11 +26,13 @@ apps/
     tsconfig.main.json     # main+preload -> out/ (CommonJS)
     tsconfig.renderer.json # renderer, só typecheck; build pelo Vite -> apps/desktop/dist
     .env.production        # VITE_TOKEN_SERVER_URL usado no build empacotado
-  server/src/index.ts      # Fastify: /health, POST /rooms, POST /rooms/:code/token (ESM, NodeNext)
+  server/src/index.ts      # Fastify: /health, POST /rooms, POST /rooms/:code/token, PUT/DELETE /rooms/:code/rpg,
+                           # GET /rooms/:code/rpg/image (ESM, NodeNext)
   web/src/                 # main.tsx (App), Home.tsx, RoomScreen.tsx, ShareDock.tsx (getDisplayMedia),
                            # session.ts (rotas/conexão), capture.ts (suporte e erros de captura)
 shared/ui/                 # usado por desktop e web: base.css/room.css (tokens e layout), Stage (palco,
-                           # fullscreen, volume local), RoomSidebar, roomState (snapshot do SDK, mute), icons
+                           # fullscreen, volume local), RoomSidebar, roomState (snapshot do SDK, mute), icons,
+                           # rpgMode/RpgControl (modo RPG), shareSounds (avisos de início/fim)
 scripts/e2e-web.mjs        # E2E da web via CDP (apresentador + espectadores + celular)
 infra/                     # docker-compose + livekit.yaml para LiveKit local (chaves dev: devkey/secret)
 ```
@@ -95,6 +97,12 @@ e `apps/web/.env`. O `.env.example` da raiz lista todos os nomes.
    `Stage` tem um viewport fixo (alvo do fullscreen) + `<audio>` por faixa ScreenShareAudio com
    volume/mute locais (`localStorage` só guarda o volume padrão deste aparelho).
    Mute do apresentador = `publication.mute()` (`setShareAudioMuted`); não para a captura.
+6b. **Modo RPG**: `POST /rooms` devolve `hostKey` só ao criador. Com ela, `PUT /rooms/:code/rpg`
+   (corpo = imagem PNG/JPEG/WebP/GIF até 5 MB, header `X-Host-Key`) liga o modo e `DELETE` desliga; o
+   server guarda a imagem em memória e grava `{"rpg":{"version":N}}` na metadata da sala via
+   `RoomServiceClient`. `useRpgMode` lê a metadata, baixa a imagem como blob e aplica: espectadores
+   desinscrevem o vídeo das telas (áudio continua) e quem transmite pausa o vídeo (`publication.mute()`),
+   inclusive após republicar. `Stage` mostra a imagem no lugar do vídeo, com volume por áudio.
 7. **Atualização**: app empacotado chama `autoUpdater.checkForUpdatesAndNotify()` contra o
    GitHub Releases de `samuelmel/partilhartela` (config `build.publish` no package do desktop).
 

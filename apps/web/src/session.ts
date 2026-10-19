@@ -6,8 +6,9 @@ export const tokenServer = import.meta.env.VITE_TOKEN_SERVER_URL ?? 'http://loca
 // Página "latest" das Releases: o nome do .exe muda a cada versão, então não há link direto estável.
 export const downloadUrl = import.meta.env.VITE_DOWNLOAD_URL ?? 'https://github.com/samuelmel/partilhartela/releases/latest';
 
-export type RoomGrant = { code: string; roomName: string; token: string; livekitUrl: string };
-export type Session = { room: Room; code: string };
+/** `hostKey` só vem para quem criou a sala: autoriza o modo RPG. */
+export type RoomGrant = { code: string; roomName: string; token: string; livekitUrl: string; hostKey?: string };
+export type Session = { room: Room; code: string; hostKey?: string };
 
 /** `/rooms` cria a sala; `/rooms/:code/token` entra numa existente. Mesmas rotas do desktop. */
 export async function requestGrant(path: string, nickname: string): Promise<RoomGrant> {
@@ -29,7 +30,7 @@ export async function requestGrant(path: string, nickname: string): Promise<Room
   if (!response.ok || !data?.token || !data.livekitUrl || !data.code) {
     throw new Error(data?.error ?? 'O servidor de salas recusou o pedido. Tente de novo.');
   }
-  return { code: data.code, roomName: data.roomName ?? '', token: data.token, livekitUrl: data.livekitUrl };
+  return { code: data.code, roomName: data.roomName ?? '', token: data.token, livekitUrl: data.livekitUrl, hostKey: data.hostKey };
 }
 
 export async function connectRoom(grant: RoomGrant): Promise<Room> {

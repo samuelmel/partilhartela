@@ -2,10 +2,12 @@ import { useState, type JSX } from 'react';
 import { ConnectionState } from 'livekit-client';
 import { AlertIcon, DownloadIcon, LeaveIcon, ScreenIcon, UsersIcon } from '../../../shared/ui/icons';
 import { RoomSidebar } from '../../../shared/ui/RoomSidebar';
+import { RpgControl } from '../../../shared/ui/RpgControl';
+import { useRpgMode } from '../../../shared/ui/rpgMode';
 import { Stage } from '../../../shared/ui/Stage';
 import { useAudioPlayback, useConnectionState, useRoomSnapshot } from '../../../shared/ui/roomState';
 import type { CaptureSupport } from './capture';
-import { downloadUrl, inviteLink, type Session } from './session';
+import { downloadUrl, inviteLink, tokenServer, type Session } from './session';
 import { ShareDock } from './ShareDock';
 
 async function copyInvite(code: string): Promise<void> {
@@ -26,8 +28,10 @@ export function RoomScreen({
   support: CaptureSupport;
   onLeave: () => void;
 }): JSX.Element {
-  const { room, code } = session;
+  const { room, code, hostKey } = session;
   const snapshot = useRoomSnapshot(room);
+  const rpg = useRpgMode(room, tokenServer, code);
+  const names = Object.fromEntries(snapshot.members.map((member) => [member.identity, member.name]));
   const connection = useConnectionState(room);
   const playback = useAudioPlayback(room);
   const [panelOpen, setPanelOpen] = useState(false);
@@ -55,7 +59,9 @@ export function RoomScreen({
         onLeave={onLeave}
         open={panelOpen}
         onClose={() => setPanelOpen(false)}
-      />
+      >
+        {hostKey && <RpgControl tokenServer={tokenServer} code={code} hostKey={hostKey} rpg={rpg} />}
+      </RoomSidebar>
       {panelOpen && <button type="button" className="side-backdrop" aria-label="Fechar painel da sala" onClick={() => setPanelOpen(false)} />}
 
       <main className="room-main">
@@ -92,6 +98,8 @@ export function RoomScreen({
           streams={snapshot.streams}
           audio={snapshot.audio}
           local={snapshot.local.video ? { track: snapshot.local.video, name: me } : undefined}
+          rpg={rpg}
+          names={names}
           empty={
             <div className="stage-empty">
               <ScreenIcon size={36} />

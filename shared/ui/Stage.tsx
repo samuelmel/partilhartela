@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX, type ReactNode } from 'react';
 import type { LocalVideoTrack, RemoteAudioTrack, RemoteVideoTrack } from 'livekit-client';
 import type { StreamItem } from './roomState';
+import type { RpgState } from './rpgMode';
 import { leaveFullscreen, useFullscreen } from './useFullscreen';
 import { canSetElementVolume, readStoredVolume, storeVolume, VolumeControl, type ListenerLevel } from './VolumeControl';
 import { CollapseIcon, ExpandIcon, VolumeOffIcon } from './icons';
@@ -19,24 +20,32 @@ const localId = 'local-preview';
  * Palco da sala: uma transmissão em destaque num viewport fixo (é ele que entra em
  * tela cheia, então trocar o destaque não derruba o fullscreen) e as demais numa faixa.
  * O áudio de cada tela toca num <audio> próprio com volume/mute locais deste aparelho.
+ * No modo RPG as telas dos outros somem (o vídeo nem é recebido) e o viewport mostra a imagem
+ * escolhida pelo criador, com o controle de volume de cada áudio.
  */
 export function Stage({
   streams,
   audio,
   local,
   empty,
-  overlayExtra
+  overlayExtra,
+  rpg,
+  names = {}
 }: {
   streams: StreamItem[];
   audio: Record<string, RemoteAudioTrack>;
   local?: { track: LocalVideoTrack; name: string };
   empty: ReactNode;
   overlayExtra?: ReactNode;
+  rpg?: RpgState;
+  /** Nome de cada participante por identity (rótulo do volume no modo RPG). */
+  names?: Record<string, string>;
 }): JSX.Element {
+  const rpgActive = rpg?.active ?? false;
   const items = useMemo<StageItem[]>(() => [
-    ...streams.map((stream) => ({ ...stream, local: false })),
+    ...(rpgActive ? [] : streams.map((stream) => ({ ...stream, local: false }))),
     ...(local ? [{ id: localId, identity: localId, name: local.name, local: true, track: local.track }] : [])
-  ], [streams, local]);
+  ], [streams, local, rpgActive]);
 
   const [featuredId, setFeaturedId] = useState<string>();
   const featured = items.find((item) => item.id === featuredId) ?? items[0];
@@ -45,7 +54,8 @@ export function Stage({
   const videoRef = useRef<HTMLVideoElement>(null);
   const fullscreen = useFullscreen(viewportRef, videoRef);
   const hasMediaRef = useRef(false);
-  hasMediaRef.current = Boolean(featured);
+  const showRpg = rpgActive && !featured;
+  hasMediaRef.current = Boolean(featured) || showRpg;
 
   const [levels, setLevels] = useState<Record<string, ListenerLevel>>({});
   const defaultVolume = useRef(readStoredVolume());
@@ -109,11 +119,60 @@ export function Stage({
         ref={viewportRef}
         className={`viewport ${fullscreen.active ? 'is-fullscreen' : ''} ${fullscreen.active && idle ? 'is-idle' : ''}`}
         onPointerMove={fullscreen.active ? wake : undefined}
-        onDoubleClick={featured ? () => void toggleFullscreen() : undefined}
+        onDoubleClick={featured || showRpg ? () => void toggleFullscreen() : undefined}
       >
         <video ref={videoRef} autoPlay playsInline muted hidden={!featured} />
 
-        {!featured && <div className="viewport-empty">{empty}</div>}
+        {!featured && !showRpg && <div className="viewport-empty">{empty}</div>}
+
+        {/* Quem transmite vê a mesma imagem que os espectadores: a prévia ficaria preta (vídeo pausado). */}
+        {rpgActive && (showRpg || featured?.local) && (
+          <div className="rpg-screen">
+            {rpg?.imageUrl ? (
+              <>
+                <img className="rpg-backdrop" src={rpg.imageUrl} alt="" aria-hidden="true" />
+                <img className="rpg-image" src={rpg.imageUrl} alt="Imagem do modo RPG" />
+              </>
+            ) : (
+              <span className="spinner" aria-label="Carregando imagem do modo RPG" />
+            )}
+          </div>
+        )}
+
+        {showRpg && (
+          <div className="overlay">
+            <div className="overlay-top">
+              <span className="rpg-tag">Modo RPG</span>
+              <span className="overlay-title">Só o áudio, sem spoiler</span>
+            </div>
+            <div className="overlay-bottom" onFocus={wake}>
+              <div className="rpg-volumes">
+                {Object.keys(audio).length > 0 ? (
+                  Object.keys(audio).map((identity) => (
+                    <VolumeControl
+                      key={identity}
+                      name={names[identity] ?? 'Transmissão'}
+                      level={levelOf(identity)}
+                      onChange={(next) => changeLevel(identity, next)}
+                    />
+                  ))
+                ) : (
+                  <span className="media-chip"><VolumeOffIcon size={16} />Nenhum som sendo transmitido agora</span>
+                )}
+              </div>
+              <button
+                type="button"
+                className="icon-btn on-media"
+                onClick={() => void toggleFullscreen()}
+                aria-label={fullscreen.active ? 'Sair da tela cheia' : 'Tela cheia'}
+                title={fullscreen.active ? 'Sair da tela cheia (Esc)' : 'Tela cheia (F)'}
+              >
+                {fullscreen.active ? <CollapseIcon /> : <ExpandIcon />}
+              </button>
+            </div>
+            {fullscreen.error && <p className="media-toast" role="alert">{fullscreen.error}</p>}
+          </div>
+        )}
 
         {featured && (
           <div className="overlay">
@@ -123,7 +182,9 @@ export function Stage({
               {overlayExtra}
             </div>
             <div className="overlay-bottom" onFocus={wake}>
-              {featured.local ? (
+              {featured.local && rpgActive ? (
+                <span className="media-chip">Modo RPG: quem assiste vê esta imagem e só ouve o som; sua tela não é enviada</span>
+              ) : featured.local ? (
                 <span className="media-chip">Prévia da sua tela, sem som aqui para evitar eco</span>
               ) : featuredAudio ? (
                 <VolumeControl

@@ -32,6 +32,8 @@ import {
   type LocalShare
 } from '../../../../shared/ui/roomState';
 import { RoomSidebar } from '../../../../shared/ui/RoomSidebar';
+import { RpgControl } from '../../../../shared/ui/RpgControl';
+import { useRpgMode } from '../../../../shared/ui/rpgMode';
 import { Stage } from '../../../../shared/ui/Stage';
 import { announceScreenRepublish, attachShareSounds } from '../../../../shared/ui/shareSounds';
 import { leaveFullscreen } from '../../../../shared/ui/useFullscreen';
@@ -59,7 +61,8 @@ type WebRtcStats = {
   packetLoss?: number;
 };
 
-type RoomGrant = { code: string; roomName: string; token: string; livekitUrl: string };
+/** `hostKey` só vem para quem criou a sala: autoriza o modo RPG. */
+type RoomGrant = { code: string; roomName: string; token: string; livekitUrl: string; hostKey?: string };
 
 const audioModes: Array<{ value: AudioMode; label: string }> = [
   { value: 'none', label: 'Sem áudio' },
@@ -692,6 +695,7 @@ export function App() {
   const [homeError, setHomeError] = useState('');
   const [room, setRoom] = useState<Room>();
   const [roomCode, setRoomCode] = useState('');
+  const [hostKey, setHostKey] = useState<string>();
   const [errorMessage, setErrorMessage] = useState('');
   const [quality, setQuality] = useState<QualityKey>('1080p30');
   const [motion, setMotion] = useState(true);
@@ -710,6 +714,7 @@ export function App() {
 
   const snapshot = useRoomSnapshot(room);
   const connection = useConnectionState(room);
+  const rpg = useRpgMode(room, tokenServer, roomCode);
 
   const roomRef = useRef<Room>();
   const localVideoTrackRef = useRef<LocalVideoTrack>();
@@ -740,6 +745,7 @@ export function App() {
     shareAudioMutedRef.current = false;
     statsHistoryRef.current = undefined;
     setRoom(undefined);
+    setHostKey(undefined);
     setStats({});
     setStatsOpen(false);
     setPanelOpen(false);
@@ -804,6 +810,7 @@ export function App() {
     roomRef.current = nextRoom;
     setRoom(nextRoom);
     setRoomCode(data.code);
+    setHostKey(data.hostKey);
     setHomeError('');
     setErrorMessage('');
     setView('room');
@@ -1078,7 +1085,9 @@ export function App() {
         onLeave={() => void leaveRoom()}
         open={panelOpen}
         onClose={() => setPanelOpen(false)}
-      />
+      >
+        {hostKey && <RpgControl tokenServer={tokenServer} code={roomCode} hostKey={hostKey} rpg={rpg} />}
+      </RoomSidebar>
       {panelOpen && <button type="button" className="side-backdrop" aria-label="Fechar painel da sala" onClick={() => setPanelOpen(false)} />}
 
       <main className="room-main">
@@ -1112,6 +1121,8 @@ export function App() {
           streams={snapshot.streams}
           audio={snapshot.audio}
           local={snapshot.local.video ? { track: snapshot.local.video, name: me } : undefined}
+          rpg={rpg}
+          names={Object.fromEntries(snapshot.members.map((m) => [m.identity, m.name]))}
           overlayExtra={statsOpen ? <StatsOverlay stats={stats} fallback={`${currentQuality.width}x${currentQuality.height}`} /> : undefined}
           empty={
             <div className="stage-empty">

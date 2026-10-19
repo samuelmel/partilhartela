@@ -47,7 +47,7 @@ export function Home({
       storeNickname(name);
       const grant = await requestGrant(kind === 'create' ? '/rooms' : `/rooms/${normalized}/token`, name);
       const room = await connectRoom(grant);
-      onEnter({ room, code: grant.code });
+      onEnter({ room, code: grant.code, hostKey: grant.hostKey });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Não foi possível entrar na sala.');
       setBusy(null);
