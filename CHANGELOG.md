@@ -2,6 +2,13 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 
+## [1.3.0] - 2026-10-19
+
+### Novidades
+
+- **desktop e web**: Modo RPG. Quem criou a sala escolhe uma imagem qualquer e liga o modo pela barra lateral: quem assiste passa a ver só essa imagem e ouvir o áudio da transmissão (com o próprio controle de volume), sem tomar spoiler. O vídeo nem chega aos espectadores e quem transmite pausa o envio da tela; quem entra depois já cai no modo. Dá para trocar a imagem ou desligar a qualquer momento.
+- **server**: rotas do modo RPG (`PUT`/`DELETE /rooms/:code/rpg`, `GET /rooms/:code/rpg/image`), autorizadas por uma chave que só o criador da sala recebe.
+
 ## [1.2.1] - 2026-10-18
 
 ### Visual
