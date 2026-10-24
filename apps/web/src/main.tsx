@@ -74,7 +74,7 @@ function App(): JSX.Element {
     );
   }
 
-  return <RoomScreen session={session} support={support} onLeave={() => void leave()} />;
+  return <RoomScreen session={session} support={support} onLeave={() => leave()} />;
 }
 
 createRoot(document.getElementById('root')!).render(<App />);

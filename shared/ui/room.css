@@ -658,6 +658,71 @@
   display: none;
 }
 
+/* Marca no cabeçalho da sala: clicar volta para o início. */
+.room-brand {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  height: 36px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-2);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color .12s ease;
+}
+
+.room-brand:hover {
+  background: var(--bg-3);
+}
+
+.room-brand:active {
+  background: var(--bg-4);
+}
+
+/* Confirmação de ações destrutivas */
+.confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, .6);
+  overscroll-behavior: contain;
+}
+
+.confirm {
+  display: grid;
+  gap: 10px;
+  width: min(420px, 100%);
+  padding: 22px;
+  border-radius: var(--radius-3);
+  background: var(--bg-2);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, .5);
+}
+
+.confirm:focus {
+  outline: none;
+}
+
+.confirm h2 {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.confirm p {
+  color: var(--text-2);
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 /* Telas estreitas: trilho vira gaveta, palco ganha proporção de vídeo */
 @media (max-width: 760px) {
   .room-shell {

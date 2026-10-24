@@ -1,6 +1,7 @@
 import { useState, type JSX } from 'react';
 import { ConnectionState } from 'livekit-client';
-import { AlertIcon, DownloadIcon, LeaveIcon, ScreenIcon, UsersIcon } from '../../../shared/ui/icons';
+import { AlertIcon, BrandMark, DownloadIcon, LeaveIcon, ScreenIcon, UsersIcon } from '../../../shared/ui/icons';
+import { ConfirmDialog } from '../../../shared/ui/ConfirmDialog';
 import { RoomSidebar } from '../../../shared/ui/RoomSidebar';
 import { RpgControl } from '../../../shared/ui/RpgControl';
 import { useRpgMode } from '../../../shared/ui/rpgMode';
@@ -26,7 +27,7 @@ export function RoomScreen({
 }: {
   session: Session;
   support: CaptureSupport;
-  onLeave: () => void;
+  onLeave: () => void | Promise<void>;
 }): JSX.Element {
   const { room, code, hostKey } = session;
   const snapshot = useRoomSnapshot(room);
@@ -35,6 +36,8 @@ export function RoomScreen({
   const connection = useConnectionState(room);
   const playback = useAudioPlayback(room);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const [playbackError, setPlaybackError] = useState('');
   const reconnecting = connection === ConnectionState.Reconnecting || connection === ConnectionState.SignalReconnecting;
   const me = snapshot.members.find((member) => member.isLocal)?.name ?? 'Você';
@@ -48,6 +51,16 @@ export function RoomScreen({
     }
   }
 
+  async function confirmLeave(): Promise<void> {
+    setLeaving(true);
+    try {
+      await onLeave();
+    } finally {
+      setLeaving(false);
+      setLeaveConfirmOpen(false);
+    }
+  }
+
   return (
     <div className="room-shell">
       <RoomSidebar
@@ -56,7 +69,7 @@ export function RoomScreen({
         connection={connection}
         copyLabel="Copiar link de convite"
         onCopy={() => copyInvite(code)}
-        onLeave={onLeave}
+        onLeave={() => setLeaveConfirmOpen(true)}
         open={panelOpen}
         onClose={() => setPanelOpen(false)}
       >
@@ -66,6 +79,15 @@ export function RoomScreen({
 
       <main className="room-main">
         <header className="room-head">
+          <button
+            type="button"
+            className="room-brand"
+            onClick={() => setLeaveConfirmOpen(true)}
+            aria-label="Voltar ao início (sair da sala)"
+            title="Voltar ao início"
+          >
+            <BrandMark size={24} />
+          </button>
           <button type="button" className="icon-btn only-narrow" onClick={() => setPanelOpen(true)} aria-label="Código da sala e participantes">
             <UsersIcon />
           </button>
@@ -76,7 +98,10 @@ export function RoomScreen({
           <a className="btn btn-quiet only-wide" href={downloadUrl} target="_blank" rel="noreferrer">
             <DownloadIcon size={16} />App para Windows
           </a>
-          <button type="button" className="icon-btn only-narrow" onClick={onLeave} aria-label="Sair da sala">
+          <button type="button" className="btn btn-quiet only-wide" onClick={() => setLeaveConfirmOpen(true)}>
+            <LeaveIcon size={16} />Sair da sala
+          </button>
+          <button type="button" className="icon-btn only-narrow" onClick={() => setLeaveConfirmOpen(true)} aria-label="Sair da sala">
             <LeaveIcon />
           </button>
         </header>
@@ -115,6 +140,16 @@ export function RoomScreen({
 
         <ShareDock room={room} local={snapshot.local} support={support} />
       </main>
+
+      <ConfirmDialog
+        open={leaveConfirmOpen}
+        title="Sair da sala?"
+        description={`Você vai sair da sala ${code}. Se estiver transmitindo, a transmissão é encerrada para todos.`}
+        confirmLabel="Sair da sala"
+        busy={leaving}
+        onConfirm={() => void confirmLeave()}
+        onCancel={() => setLeaveConfirmOpen(false)}
+      />
     </div>
   );
 }

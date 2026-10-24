@@ -14,6 +14,7 @@ import {
   BrandMark,
   CloseIcon,
   GearIcon,
+  LeaveIcon,
   RefreshIcon,
   ScreenIcon,
   StatsIcon,
@@ -23,6 +24,7 @@ import {
   VolumeIcon,
   VolumeOffIcon
 } from '../../../../shared/ui/icons';
+import { ConfirmDialog } from '../../../../shared/ui/ConfirmDialog';
 import { qualities, qualityKeys, isQualityKey, type QualityKey } from '../../../../shared/ui/qualities';
 import {
   describeConnectError,
@@ -711,6 +713,8 @@ export function App() {
   const [stats, setStats] = useState<WebRtcStats>({});
   const [statsOpen, setStatsOpen] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+  const [leaving, setLeaving] = useState(false);
 
   const snapshot = useRoomSnapshot(room);
   const connection = useConnectionState(room);
@@ -749,6 +753,8 @@ export function App() {
     setStats({});
     setStatsOpen(false);
     setPanelOpen(false);
+    setLeaveConfirmOpen(false);
+    setLeaving(false);
     setIsShareModalOpen(false);
     setBusy(null);
     setErrorMessage('');
@@ -1046,6 +1052,20 @@ export function App() {
     await currentRoom?.disconnect();
   }
 
+  function requestLeave() {
+    setLeaveConfirmOpen(true);
+  }
+
+  async function confirmLeave() {
+    setLeaving(true);
+    try {
+      await leaveRoom();
+    } finally {
+      setLeaving(false);
+      setLeaveConfirmOpen(false);
+    }
+  }
+
   async function copyInvite() {
     const text = webAppUrl ? `${webAppUrl}/?room=${roomCode}` : roomCode;
     try {
@@ -1082,7 +1102,7 @@ export function App() {
         connection={connection}
         copyLabel={webAppUrl ? 'Copiar link de convite' : 'Copiar código'}
         onCopy={copyInvite}
-        onLeave={() => void leaveRoom()}
+        onLeave={requestLeave}
         open={panelOpen}
         onClose={() => setPanelOpen(false)}
       >
@@ -1092,6 +1112,15 @@ export function App() {
 
       <main className="room-main">
         <header className="room-head">
+          <button
+            type="button"
+            className="room-brand"
+            onClick={requestLeave}
+            aria-label="Voltar ao início (sair da sala)"
+            title="Voltar ao início"
+          >
+            <BrandMark size={24} />
+          </button>
           <button type="button" className="icon-btn only-narrow" onClick={() => setPanelOpen(true)} aria-label="Código da sala e participantes">
             <UsersIcon />
           </button>
@@ -1101,6 +1130,12 @@ export function App() {
           </h1>
           <button type="button" className="btn btn-quiet" aria-pressed={statsOpen} onClick={() => setStatsOpen((v) => !v)}>
             <StatsIcon size={16} />{statsOpen ? 'Ocultar estatísticas' : 'Estatísticas'}
+          </button>
+          <button type="button" className="btn btn-quiet only-wide" onClick={requestLeave}>
+            <LeaveIcon size={16} />Sair da sala
+          </button>
+          <button type="button" className="icon-btn only-narrow" onClick={requestLeave} aria-label="Sair da sala">
+            <LeaveIcon />
           </button>
         </header>
 
@@ -1195,6 +1230,16 @@ export function App() {
           }}
         />
       )}
+
+      <ConfirmDialog
+        open={leaveConfirmOpen}
+        title="Sair da sala?"
+        description={`Você vai sair da sala ${roomCode}. Se estiver transmitindo, a transmissão é encerrada para todos.`}
+        confirmLabel="Sair da sala"
+        busy={leaving}
+        onConfirm={() => void confirmLeave()}
+        onCancel={() => setLeaveConfirmOpen(false)}
+      />
     </div>
   );
 }
