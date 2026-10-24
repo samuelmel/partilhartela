@@ -13,6 +13,62 @@ const rawUploadLimit = 4 * 1024 * 1024;
 const acceptedTypes = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
 const maxSide = 1920;
 
+// A última imagem escolhida fica guardada neste aparelho para reativar o modo RPG sem abrir o
+// seletor de arquivos de novo. É preferência local, nunca vai para o servidor por aqui.
+const lastImageDb = 'partilhartela';
+const lastImageStore = 'rpg-last-image';
+
+function openImageDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') {
+      reject(new Error('Armazenamento local indisponível'));
+      return;
+    }
+    const request = indexedDB.open(lastImageDb, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(lastImageStore)) {
+        request.result.createObjectStore(lastImageStore);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error('Não foi possível abrir o armazenamento local'));
+  });
+}
+
+async function saveLastImage(image: Blob): Promise<void> {
+  const db = await openImageDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(lastImageStore, 'readwrite');
+      transaction.objectStore(lastImageStore).put(image, 'last');
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error('Não foi possível guardar a imagem'));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/** Última imagem usada neste aparelho, se ainda estiver guardada (nunca lança). */
+export async function loadLastRpgImage(): Promise<Blob | undefined> {
+  try {
+    const db = await openImageDb();
+    try {
+      const image = await new Promise<unknown>((resolve, reject) => {
+        const transaction = db.transaction(lastImageStore, 'readonly');
+        const request = transaction.objectStore(lastImageStore).get('last');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error ?? new Error('Não foi possível ler a imagem'));
+      });
+      return image instanceof Blob ? image : undefined;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return undefined;
+  }
+}
+
 function readRpgVersion(metadata: string | undefined): number | undefined {
   if (!metadata) return undefined;
   try {
@@ -112,7 +168,7 @@ export function useRpgMode(room: Room | undefined, tokenServer: string, code: st
 }
 
 /** Reduz a imagem quando ela é grande demais ou num formato que o servidor não aceita. */
-async function prepareImage(file: File): Promise<Blob> {
+async function prepareImage(file: Blob): Promise<Blob> {
   if (acceptedTypes.includes(file.type) && file.size <= rawUploadLimit) return file;
 
   let bitmap: ImageBitmap;
@@ -144,14 +200,23 @@ async function rpgRequest(url: string, init: RequestInit): Promise<void> {
   throw new Error(response.status === 413 ? 'Imagem grande demais. Escolha uma menor.' : data?.error ?? 'Não foi possível mudar o modo RPG.');
 }
 
-/** Liga o modo RPG (ou troca a imagem). Só funciona com a chave que o servidor deu a quem criou a sala. */
-export async function enableRpg(tokenServer: string, code: string, hostKey: string, file: File): Promise<void> {
+/**
+ * Liga o modo RPG (ou troca a imagem). Só funciona com a chave que o servidor deu a quem criou a
+ * sala. Devolve a imagem já preparada (é ela que fica guardada como "última imagem usada").
+ */
+export async function enableRpg(tokenServer: string, code: string, hostKey: string, file: Blob): Promise<Blob> {
   const image = await prepareImage(file);
   await rpgRequest(`${tokenServer}/rooms/${code}/rpg`, {
     method: 'PUT',
     headers: { 'Content-Type': image.type, 'X-Host-Key': hostKey },
     body: image
   });
+  try {
+    await saveLastImage(image);
+  } catch (error) {
+    console.warn('[PartilharTela] Não foi possível guardar a última imagem do modo RPG:', error);
+  }
+  return image;
 }
 
 export async function disableRpg(tokenServer: string, code: string, hostKey: string): Promise<void> {

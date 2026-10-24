@@ -888,6 +888,14 @@
   background: var(--bg-0);
 }
 
+.rpg-last {
+  margin: 0;
+}
+
+.rpg-last .side-note {
+  padding: 0 8px;
+}
+
 .rpg-actions {
   display: grid;
   gap: 8px;
