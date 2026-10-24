@@ -3,12 +3,16 @@ import { autoUpdater } from 'electron-updater';
 import loopback, { type LoopbackCapture } from 'loopback-capture';
 import { execFile } from 'node:child_process';
 import path from 'node:path';
+import { authorizeWithDiscord, clearSession, handleProtocolAuth, loadSession, saveSession } from './discordAuth';
 
 const isDevelopment = !app.isPackaged;
 const devServerUrl = 'http://localhost:5173';
 let selectedCaptureSourceId: string | undefined;
 let audioCapture: LoopbackCapture | undefined;
 let mainWindow: BrowserWindow | undefined;
+// Código recebido por partilhartela://join/CODIGO antes de o renderer pedir (app abrindo pelo link).
+let pendingJoinCode: string | undefined;
+const protocolScheme = 'partilhartela';
 
 function createWindow(): void {
   const window = new BrowserWindow({
@@ -80,6 +84,65 @@ function configureAutoUpdater(): void {
   void autoUpdater.checkForUpdatesAndNotify();
 }
 
+function focusMainWindow(): void {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+/** partilhartela://join/CODIGO entra na sala; partilhartela://auth/callback conclui o login. */
+function handleDeepLink(raw: string): void {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return;
+  }
+  if (url.protocol !== `${protocolScheme}:`) return;
+  // Em URLs não especiais o "host" é o primeiro segmento: join, auth.
+  const parts = [url.hostname, ...url.pathname.split('/')].filter(Boolean);
+  if (parts[0] === 'auth' && parts[1] === 'callback') {
+    handleProtocolAuth(url);
+    focusMainWindow();
+    return;
+  }
+  const code = parts[0] === 'join' ? parts[1]?.toUpperCase() : undefined;
+  if (!code || !/^[A-Z0-9]{6}$/.test(code)) return;
+  // Guarda e só avisa: o renderer busca com consume-join (também ao montar), sem corrida nem entrada dupla.
+  pendingJoinCode = code;
+  focusMainWindow();
+  mainWindow?.webContents.send('deeplink:join');
+}
+
+function findDeepLink(argv: string[]): string | undefined {
+  return argv.find((arg) => arg.startsWith(`${protocolScheme}://`));
+}
+
+// Uma instância só: abrir um link com o app aberto chega como 'second-instance' (Windows/Linux).
+const isPrimaryInstance = app.requestSingleInstanceLock();
+if (!isPrimaryInstance) {
+  app.quit();
+} else {
+  app.on('second-instance', (_event, argv) => {
+    const link = findDeepLink(argv);
+    if (link) handleDeepLink(link);
+    else focusMainWindow();
+  });
+  app.on('open-url', (event, url) => {
+    event.preventDefault();
+    handleDeepLink(url);
+  });
+  // Em desenvolvimento o executável é o electron.exe: registra com o caminho do app.
+  if (process.defaultApp && process.argv[1]) {
+    app.setAsDefaultProtocolClient(protocolScheme, process.execPath, [path.resolve(process.argv[1])]);
+  } else {
+    app.setAsDefaultProtocolClient(protocolScheme);
+  }
+  const initialLink = findDeepLink(process.argv);
+  if (initialLink) handleDeepLink(initialLink);
+}
+
 app.commandLine.appendSwitch('enable-features', 'WebRtcHideLocalIpsWithMdns');
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
@@ -92,6 +155,7 @@ app.commandLine.appendSwitch('enable-accelerated-video-encode');
 const allowedPermissions = new Set(['media', 'display-capture', 'fullscreen']);
 
 app.whenReady().then(() => {
+  if (!isPrimaryInstance) return;
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(allowedPermissions.has(permission));
   });
@@ -170,6 +234,15 @@ app.whenReady().then(() => {
     audioCapture?.stop();
     audioCapture = undefined;
   });
+  ipcMain.handle('desktop:consume-join', () => {
+    const code = pendingJoinCode;
+    pendingJoinCode = undefined;
+    return code ?? null;
+  });
+  ipcMain.handle('auth:discord-authorize', (_event, clientId: unknown) => authorizeWithDiscord(clientId));
+  ipcMain.handle('auth:save-session', (_event, value: unknown) => saveSession(value));
+  ipcMain.handle('auth:load-session', () => loadSession());
+  ipcMain.handle('auth:clear-session', () => clearSession());
 
   createWindow();
   configureAutoUpdater();

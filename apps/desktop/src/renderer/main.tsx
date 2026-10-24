@@ -24,6 +24,7 @@ import {
   VolumeIcon,
   VolumeOffIcon
 } from '../../../../shared/ui/icons';
+import { Avatar } from '../../../../shared/ui/Avatar';
 import { ConfirmDialog } from '../../../../shared/ui/ConfirmDialog';
 import { qualities, qualityKeys, isQualityKey, type QualityKey } from '../../../../shared/ui/qualities';
 import {
@@ -42,6 +43,7 @@ import { leaveFullscreen } from '../../../../shared/ui/useFullscreen';
 import '../../../../shared/ui/base.css';
 import '../../../../shared/ui/room.css';
 import './styles.css';
+import { useDiscordSession, type DiscordUser } from './discordSession';
 
 type AudioMode = 'none' | 'system' | 'application' | 'system-excluding-discord';
 
@@ -133,12 +135,15 @@ function storeNickname(value: string): void {
   }
 }
 
-async function postJson<T>(endpoint: string, data: unknown): Promise<T> {
+/** O servidor recusou a sessão do Discord (401): ela precisa ser apagada e o login refeito. */
+class SessionExpiredError extends Error {}
+
+async function postJson<T>(endpoint: string, data: unknown, sessionToken?: string): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${tokenServer}${endpoint}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}) },
       body: JSON.stringify(data)
     });
   } catch {
@@ -147,6 +152,7 @@ async function postJson<T>(endpoint: string, data: unknown): Promise<T> {
 
   if (!response.ok) {
     const errorBody = await response.json().catch(() => null) as { error?: string } | null;
+    if (response.status === 401) throw new SessionExpiredError(errorBody?.error ?? 'Sua sessão do Discord expirou. Entre de novo.');
     throw new Error(errorBody?.error ?? 'Servidor indisponível.');
   }
 
@@ -321,23 +327,50 @@ function StatsOverlay({ stats, fallback }: { stats: WebRtcStats; fallback: strin
 function Home({
   initialCode,
   error,
+  notice,
+  discordUser,
+  discordLoading,
   onCreate,
-  onJoin
+  onJoin,
+  onDiscordLogin,
+  onDiscordLogout,
+  onJoinVoice
 }: {
   initialCode: string;
   error: string;
+  /** Entrada em andamento vinda de um link partilhartela://join. */
+  notice: string;
+  discordUser?: DiscordUser;
+  discordLoading: boolean;
   onCreate: (nickname: string) => Promise<void>;
   onJoin: (code: string, nickname: string) => Promise<void>;
+  onDiscordLogin: () => Promise<void>;
+  onDiscordLogout: () => Promise<void>;
+  onJoinVoice: () => Promise<void>;
 }) {
   const [nickname, setNickname] = useState(readNickname);
   const [code, setCode] = useState(initialCode);
-  const [busy, setBusy] = useState<'create' | 'join' | null>(null);
+  const [busy, setBusy] = useState<'create' | 'join' | 'discord' | 'voice' | null>(null);
   const [localError, setLocalError] = useState('');
   const [nicknameMissing, setNicknameMissing] = useState(false);
   const shownError = localError || error;
 
+  async function runDiscord(kind: 'discord' | 'voice') {
+    setLocalError('');
+    setBusy(kind);
+    try {
+      if (kind === 'discord') await onDiscordLogin();
+      else await onJoinVoice();
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : 'Não foi possível falar com o Discord.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function run(kind: 'create' | 'join') {
-    const name = nickname.trim();
+    // Com login, o nome vem do Discord (o servidor ignora o apelido).
+    const name = discordUser?.name ?? nickname.trim();
     const normalized = code.trim().toUpperCase();
     setLocalError('');
     if (!name) {
@@ -351,7 +384,7 @@ function Home({
       document.getElementById('room-code')?.focus();
       return;
     }
-    storeNickname(name);
+    if (!discordUser) storeNickname(name);
     setBusy(kind);
     try {
       if (kind === 'create') await onCreate(name);
@@ -362,7 +395,7 @@ function Home({
     }
   }
 
-  const working = busy !== null;
+  const working = busy !== null || Boolean(notice);
 
   return (
     <div className="d-home">
@@ -374,7 +407,45 @@ function Home({
           <h1 id="start-title">Compartilhe sua tela</h1>
           <p className="d-lead">Crie uma sala e passe o código. Quem entrar assiste por este app ou pelo navegador.</p>
 
-          <div className="field">
+          <div className="d-discord">
+            {discordUser ? (
+              <>
+                <div className="d-discord-user">
+                  <Avatar identity={discordUser.id} name={discordUser.name} url={discordUser.avatarUrl} />
+                  <span className="d-discord-name">
+                    <strong>{discordUser.name}</strong>
+                    <span>Conectado com o Discord</span>
+                  </span>
+                  <button type="button" className="btn btn-quiet" onClick={() => void onDiscordLogout()} disabled={working}>
+                    Sair
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-lg btn-block"
+                  onClick={() => void runDiscord('voice')}
+                  disabled={working}
+                  aria-busy={busy === 'voice'}
+                >
+                  {busy === 'voice' ? <span className="spinner" aria-hidden="true" /> : <UsersIcon size={18} />}
+                  {busy === 'voice' ? 'Procurando sua call…' : 'Entrar na call atual'}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-lg btn-block"
+                onClick={() => void runDiscord('discord')}
+                disabled={working || discordLoading}
+                aria-busy={busy === 'discord'}
+              >
+                {busy === 'discord' && <span className="spinner" aria-hidden="true" />}
+                {busy === 'discord' ? 'Aguardando o Discord no navegador…' : 'Entrar com Discord'}
+              </button>
+            )}
+          </div>
+
+          {!discordUser && <div className="field">
             <label className="field-label" htmlFor="nickname">Seu apelido</label>
             <input
               id="nickname"
@@ -392,11 +463,11 @@ function Home({
               }}
               disabled={working}
             />
-          </div>
+          </div>}
 
           <button
             type="button"
-            className="btn btn-primary btn-lg btn-block"
+            className={`btn btn-lg btn-block ${discordUser ? '' : 'btn-primary'}`}
             onClick={() => void run('create')}
             disabled={working}
             aria-busy={busy === 'create'}
@@ -432,6 +503,7 @@ function Home({
           </form>
 
           <div aria-live="assertive">
+            {notice && <p className="notice notice-ok" role="status"><span className="spinner" aria-hidden="true" />{notice}</p>}
             {shownError && <p className="notice notice-error"><AlertIcon size={18} />{shownError}</p>}
           </div>
         </section>
@@ -715,6 +787,11 @@ export function App() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  const [linkNotice, setLinkNotice] = useState('');
+  // Link de outra sala chegou com esta aberta: pergunta antes de trocar.
+  const [switchCode, setSwitchCode] = useState<string>();
+  const [switching, setSwitching] = useState(false);
+  const discord = useDiscordSession(tokenServer);
 
   const snapshot = useRoomSnapshot(room);
   const connection = useConnectionState(room);
@@ -734,7 +811,12 @@ export function App() {
   audioModeRef.current = audioMode;
   const excludedAudioProcessIdRef = useRef(excludedAudioProcessId);
   excludedAudioProcessIdRef.current = excludedAudioProcessId;
-  const lostConnectionRef = useRef<(code: string) => void>(() => undefined);
+  const lostConnectionRef = useRef<(code: string, reason?: DisconnectReason) => void>(() => undefined);
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const roomCodeRef = useRef(roomCode);
+  roomCodeRef.current = roomCode;
+  const joinFromLinkRef = useRef<(code: string) => void>(() => undefined);
 
   useEffect(() => {
     return () => {
@@ -761,10 +843,16 @@ export function App() {
     setView('home');
   }
 
-  lostConnectionRef.current = (code: string) => {
+  lostConnectionRef.current = (code: string, reason?: DisconnectReason) => {
     void stopApplicationAudio();
     void leaveFullscreen();
     resetRoomState();
+    // Sala de canal do Discord: o bot encerra quando o canal de voz esvazia.
+    if (reason === DisconnectReason.ROOM_DELETED) {
+      setHomeCode('');
+      setHomeError(`A sala ${code} foi encerrada.`);
+      return;
+    }
     setHomeCode(code);
     setHomeError(`A conexão com a sala caiu. Entre de novo com o código ${code}.`);
   };
@@ -789,7 +877,7 @@ export function App() {
       window.clearInterval(statsInterval);
       // Handlers são registrados uma vez por conexão: usa ref, não estado React.
       if (reason !== DisconnectReason.CLIENT_INITIATED) {
-        lostConnectionRef.current(data.code);
+        lostConnectionRef.current(data.code, reason);
       }
     });
 
@@ -822,14 +910,79 @@ export function App() {
     setView('room');
   }
 
+  /** Com sessão do Discord o token sai com o id, o nome e o avatar dela. */
+  async function requestGrant(endpoint: string, nickname: string): Promise<RoomGrant> {
+    try {
+      return await postJson<RoomGrant>(endpoint, { nickname }, discord.sessionRef.current?.sessionToken);
+    } catch (err) {
+      if (err instanceof SessionExpiredError) await discord.expire();
+      throw err;
+    }
+  }
+
   async function handleCreateRoom(nickname: string) {
-    const data = await postJson<RoomGrant>('/rooms', { nickname });
-    await connectToRoom(data);
+    await connectToRoom(await requestGrant('/rooms', nickname));
   }
 
   async function handleJoinRoom(code: string, nickname: string) {
-    const data = await postJson<RoomGrant>(`/rooms/${code}/token`, { nickname });
-    await connectToRoom(data);
+    await connectToRoom(await requestGrant(`/rooms/${code}/token`, nickname));
+  }
+
+  async function handleJoinVoice() {
+    const voice = await discord.findVoiceRoom();
+    await handleJoinRoom(voice.code, discord.sessionRef.current?.user.name ?? '');
+  }
+
+  async function joinByLink(code: string) {
+    const name = discord.sessionRef.current?.user.name ?? readNickname().trim();
+    if (!name) {
+      setHomeCode(code);
+      setHomeError(`Escolha um apelido e clique em Entrar para assistir a sala ${code}.`);
+      return;
+    }
+    setHomeError('');
+    setLinkNotice(`Entrando na sala ${code}…`);
+    try {
+      await handleJoinRoom(code, name);
+    } catch (err) {
+      setHomeCode(code);
+      setHomeError(err instanceof Error ? err.message : 'Não foi possível entrar na sala.');
+    } finally {
+      setLinkNotice('');
+    }
+  }
+
+  joinFromLinkRef.current = (code: string) => {
+    if (viewRef.current === 'room') {
+      if (roomCodeRef.current !== code) setSwitchCode(code);
+      return;
+    }
+    void joinByLink(code);
+  };
+
+  // Links partilhartela://join/CODIGO (botão do bot no Discord). Espera a sessão carregar para entrar com ela.
+  useEffect(() => {
+    if (discord.loading) return;
+    const check = () => {
+      void window.partilharTela.consumePendingJoin().then((code) => {
+        if (code) joinFromLinkRef.current(code);
+      });
+    };
+    check();
+    return window.partilharTela.onJoinRequest(check);
+  }, [discord.loading]);
+
+  async function confirmSwitch() {
+    const code = switchCode;
+    if (!code) return;
+    setSwitching(true);
+    try {
+      await leaveRoom();
+    } finally {
+      setSwitching(false);
+      setSwitchCode(undefined);
+    }
+    await joinByLink(code);
   }
 
   async function loadSources() {
@@ -1081,8 +1234,14 @@ export function App() {
         key={`${homeCode}-${homeError}`}
         initialCode={homeCode}
         error={homeError}
+        notice={linkNotice}
+        discordUser={discord.session?.user}
+        discordLoading={discord.loading}
         onCreate={handleCreateRoom}
         onJoin={handleJoinRoom}
+        onDiscordLogin={discord.login}
+        onDiscordLogout={discord.logout}
+        onJoinVoice={handleJoinVoice}
       />
     );
   }
@@ -1239,6 +1398,16 @@ export function App() {
         busy={leaving}
         onConfirm={() => void confirmLeave()}
         onCancel={() => setLeaveConfirmOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={Boolean(switchCode)}
+        title="Trocar de sala?"
+        description={`Você vai sair da sala ${roomCode} e entrar na sala ${switchCode ?? ''}. Se estiver transmitindo, a transmissão é encerrada.`}
+        confirmLabel="Trocar de sala"
+        busy={switching}
+        onConfirm={() => void confirmSwitch()}
+        onCancel={() => setSwitchCode(undefined)}
       />
     </div>
   );

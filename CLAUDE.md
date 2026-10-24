@@ -2,7 +2,8 @@
 
 Compartilhamento de tela + áudio ao vivo. Qualquer participante transmite e assiste, pelo app
 desktop (Electron/Windows) ou pelo navegador (`apps/web`); o desktop acrescenta áudio por aplicativo. A mídia trafega via LiveKit
-(WebRTC); o servidor Fastify só cria códigos de sala e assina tokens JWT do LiveKit.
+(WebRTC); o servidor Fastify cria salas (SQLite), assina tokens JWT do LiveKit, faz o login com Discord e
+atende o bot do Discord (`apps/bot`), que liga cada canal de voz a uma sala.
 
 ## Stack (versões instaladas)
 
@@ -12,7 +13,8 @@ desktop (Electron/Windows) ou pelo navegador (`apps/web`); o desktop acrescenta 
 | Electron | 44.7.0 (fixo) · electron-builder 26 · electron-updater 6 |
 | React | 18.3 · Vite 6 · TypeScript 5.9 (strict em todos os apps) |
 | livekit-client | 2.22 (desktop e web) · livekit-server-sdk 2.19 (server) |
-| Fastify | 5 + @fastify/cors, @fastify/rate-limit · nanoid 5 |
+| Fastify | 5 + @fastify/cors, @fastify/rate-limit · nanoid 5 · `node:sqlite` (Node 22.13+) |
+| discord.js | 14 (apps/bot; intents Guilds + GuildVoiceStates) |
 | loopback-capture | 3.0 (módulo nativo, captura de áudio por PID no Windows) |
 
 ## Estrutura
@@ -27,7 +29,12 @@ apps/
     tsconfig.renderer.json # renderer, só typecheck; build pelo Vite -> apps/desktop/dist
     .env.production        # VITE_TOKEN_SERVER_URL usado no build empacotado
   server/src/index.ts      # Fastify: /health, POST /rooms, POST /rooms/:code/token, PUT/DELETE /rooms/:code/rpg,
-                           # GET /rooms/:code/rpg/image (ESM, NodeNext)
+                           # GET /rooms/:code/rpg/image, GET /join/:code, /auth/discord/*, /me, /me/voice-room,
+                           # /internal/* (só o bot, header X-Bot-Secret) (ESM, NodeNext)
+  server/src/db.ts         # SQLite: rooms (código e canal), users, sessions (hash), voice_states
+  server/src/discord.ts    # troca do code OAuth (PKCE) por perfil, avatar, token de sessão
+  bot/src/index.ts         # discord.js: voiceStateUpdate -> abre/encerra sala do canal, /tela, sincroniza ao iniciar
+  desktop/src/main/discordAuth.ts # login PKCE (loopback 127.0.0.1:53134 ou partilhartela://auth) + safeStorage
   web/src/                 # main.tsx (App), Home.tsx, RoomScreen.tsx, ShareDock.tsx (getDisplayMedia),
                            # session.ts (rotas/conexão), capture.ts (suporte e erros de captura)
 shared/ui/                 # usado por desktop e web: base.css/room.css (tokens e layout), Stage (palco,
@@ -45,8 +52,9 @@ Workspaces npm na raiz; um único `package-lock.json`.
 npm install                 # instala todos os workspaces (loopback-capture compila nativo)
 npm run dev                 # = dev:desktop: server (tsx watch :8787) + Vite :5173 + Electron
 npm run dev:server          # só o servidor de tokens
+npm run dev:bot             # bot do Discord (precisa de apps/bot/.env)
 npm run dev:web             # viewer web em :5174 (--host 0.0.0.0)
-npm run typecheck           # server + desktop (main/preload e renderer)
+npm run typecheck           # server + bot + desktop (main/preload e renderer)
 npm run typecheck:web
 npm run build               # server (tsc -> apps/server/dist) + desktop (tsc + vite)
 npm run build:web
@@ -73,6 +81,11 @@ e `apps/web/.env`. O `.env.example` da raiz lista todos os nomes.
 | `VITE_TOKEN_SERVER_URL` | desktop, web | embutida no bundle no build; padrão `http://localhost:8787` |
 | `VITE_WEB_APP_URL` | desktop | opcional; com ela "Copiar" gera link `?room=` em vez do código |
 | `VITE_DOWNLOAD_URL` | web | opcional; padrão `github.com/samuelmel/partilhartela/releases/latest` |
+| `PUBLIC_BASE_URL` | server | base dos links `/join/CODIGO` enviados pelo bot |
+| `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` | server | login com Discord; o secret nunca vai ao cliente |
+| `BOT_API_SECRET` | server, bot | segredo das rotas `/internal`; sem ele ficam desligadas |
+| `DATABASE_PATH` / `DOWNLOAD_URL` / `WEB_APP_URL` | server | opcionais (SQLite; links da página `/join`) |
+| `DISCORD_BOT_TOKEN` / `BACKEND_URL` / `DISCORD_DEV_GUILD_ID` | bot | token só no `apps/bot/.env` do servidor |
 
 ## Fluxo principal
 
@@ -103,6 +116,13 @@ e `apps/web/.env`. O `.env.example` da raiz lista todos os nomes.
    `RoomServiceClient`. `useRpgMode` lê a metadata, baixa a imagem como blob e aplica: espectadores
    desinscrevem o vídeo das telas (áudio continua) e quem transmite pausa o vídeo (`publication.mute()`),
    inclusive após republicar. `Stage` mostra a imagem no lugar do vídeo, com volume por áudio.
+6c. **Discord**: o bot manda voice states ao server (`/internal/voice-states`, sync completo ao iniciar) e
+   abre a sala do canal (`PUT /internal/channels/:guild/:channel/room`, código de 6 chars + LiveKit
+   `partilhartela-dc-<guild>-<channel>`); canal vazio = `DELETE` (apaga a sala no LiveKit também). Login: o main
+   gera PKCE e recebe o code; o renderer troca em `/auth/discord/exchange` por um token de sessão (SQLite guarda o
+   hash) salvo com `safeStorage`. Com `Authorization: Bearer`, o token LiveKit usa o id do Discord como identity e
+   `{"discord":{id,avatarUrl}}` na metadata (`avatarUrlOf` em roomState). `partilhartela://join/CODIGO` chega por
+   argv/second-instance/open-url; o renderer lê com `consumePendingJoin`.
 7. **Atualização**: app empacotado chama `autoUpdater.checkForUpdatesAndNotify()` contra o
    GitHub Releases de `samuelmel/partilhartela` (config `build.publish` no package do desktop).
 
@@ -119,7 +139,9 @@ e `apps/web/.env`. O `.env.example` da raiz lista todos os nomes.
 
 ## Limitações conhecidas
 
-- Salas vivem só na memória do server (sem persistência; Render free hiberna e perde os códigos).
+- Salas ficam no SQLite do server (no Render free o disco é efêmero: um deploy/hibernação apaga o banco).
+  A imagem do modo RPG continua só em memória. Salas de canal não têm modo RPG (não há criador com hostKey).
+- Mesma conta do Discord em dois aparelhos na mesma sala: a identity é igual e o LiveKit derruba a conexão mais antiga.
 - Áudio por aplicativo/exclusão só no Windows; o PID da janela é inferido comparando títulos
   (`Get-Process` via PowerShell), pode falhar com títulos iguais ou dinâmicos.
 - Só gera instalador Windows (NSIS); `dist` não assina o executável.

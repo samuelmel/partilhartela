@@ -81,7 +81,7 @@ Não basta trocar apenas o `.exe`: o `latest.yml` informa ao atualizador qual ve
 
 ### Pré-requisitos
 - **Windows 10/11**
-- **Node.js 20+** e **npm 10+**
+- **Node.js 22.13+** e **npm 10+** (o servidor usa `node:sqlite`)
 
 ### Comandos de Desenvolvimento
 
@@ -101,6 +101,91 @@ npm run typecheck
 
 ---
 
+## 🎮 Integração com o Discord
+
+O Discord não é modificado: um **bot** (`apps/bot`) observa os canais de voz e o **servidor**
+(`apps/server`) liga cada canal a uma sala do PartilharTela.
+
+- A primeira pessoa entrou num canal de voz → o servidor cria a sala do canal (no LiveKit:
+  `partilhartela-dc-<guildId>-<channelId>`) e o bot manda no chat do canal de voz um botão
+  **"Assistir / Compartilhar tela"** para `PUBLIC_BASE_URL/join/<CODIGO>`.
+- `/join/<CODIGO>` tenta abrir `partilhartela://join/<CODIGO>` (o app entra direto na sala) e mostra o
+  link de download se o app não estiver instalado.
+- `/tela` cria (ou reaproveita) a sala do canal em que você está e responde com o mesmo botão.
+- Canal esvaziou → a sala é encerrada (quem estava nela no LiveKit sai) e a mensagem vira "Sala encerrada".
+- No app: **Entrar com Discord** (OAuth2 + PKCE, escopo `identify`) e depois **Entrar na call atual**.
+  Com login, o participante aparece com o nome e o avatar do Discord. O código de 6 caracteres continua
+  funcionando para quem não usa Discord.
+- Salas, sessões de login e voice states ficam em SQLite no servidor (`node:sqlite`, Node 22.13+), então
+  reiniciar o servidor não derruba as salas. A imagem do modo RPG continua só em memória.
+
+### 1. Criar o app no Discord Developer Portal
+
+1. Acesse <https://discord.com/developers/applications> → **New Application** (ex.: "PartilharTela").
+2. **OAuth2**: copie o **Client ID** e gere o **Client Secret** → `DISCORD_CLIENT_ID` e
+   `DISCORD_CLIENT_SECRET` no `apps/server/.env`.
+3. **OAuth2 → Redirects**: cadastre exatamente as duas URIs (o app usa a primeira; a segunda é o
+   plano B se a porta 53134 estiver ocupada):
+   - `http://127.0.0.1:53134/callback`
+   - `partilhartela://auth/callback`
+4. **Bot**: clique em **Reset Token** e copie → `DISCORD_BOT_TOKEN` no `apps/bot/.env`.
+   Desligue **Public Bot** se só você vai convidá-lo.
+5. **Intents**: o bot usa só `Guilds` e `GuildVoiceStates`, que **não são privilegiadas** — não precisa
+   ligar nenhuma chave em *Privileged Gateway Intents* (Presence, Server Members e Message Content ficam desligadas).
+
+### 2. Convidar o bot (permissões mínimas)
+
+Troque `CLIENT_ID` pelo seu Client ID:
+
+```text
+https://discord.com/oauth2/authorize?client_id=CLIENT_ID&scope=bot%20applications.commands&permissions=3072
+```
+
+`3072` = **Ver canais** (1024) + **Enviar mensagens** (2048). O escopo `applications.commands` registra o
+`/tela`. Editar as próprias mensagens não exige permissão extra. Se o bot não puder escrever no chat de
+algum canal de voz, a sala é criada mesmo assim e o `/tela` continua funcionando.
+
+### 3. Configurar e rodar
+
+```bash
+# apps/server/.env: LIVEKIT_*, PUBLIC_BASE_URL, DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, BOT_API_SECRET
+# apps/bot/.env:    DISCORD_BOT_TOKEN, BACKEND_URL, BOT_API_SECRET (mesmo valor do server), DISCORD_DEV_GUILD_ID (opcional)
+docker compose -f infra/docker-compose.yml up -d   # LiveKit local
+npm run dev:server
+npm run dev:bot
+npm run dev:desktop
+```
+
+Gere o `BOT_API_SECRET` com `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+O `.env.example` da raiz lista todos os nomes. Em produção o bot é um processo contínuo (no Render, um
+*Background Worker*; um Web Service gratuito hiberna e o bot cairia junto).
+
+O Discord só aceita botões com URL pública: com `PUBLIC_BASE_URL=http://localhost:8787` o bot manda o link
+no texto em vez do botão. Para testar o botão de verdade, exponha o servidor com um túnel
+(`cloudflared tunnel --url http://localhost:8787`) e use a URL https dele em `PUBLIC_BASE_URL`.
+
+O protocolo `partilhartela://` é registrado pelo instalador (NSIS) e, em desenvolvimento, pelo próprio
+Electron ao abrir (`app.setAsDefaultProtocolClient`).
+
+### 4. Testar ponta a ponta
+
+1. Crie um servidor de teste no Discord, convide o bot e defina `DISCORD_DEV_GUILD_ID` com o id dele
+   (Modo desenvolvedor → clique direito no servidor → Copiar ID).
+2. Suba LiveKit, server, bot e desktop (comandos acima). No log do bot deve aparecer `Bot conectado como ...`.
+3. **Conta A** entra num canal de voz → no chat desse canal aparece a mensagem com o botão.
+4. **Conta B** (outra conta, em outro PC ou no navegador com outro perfil) entra no mesmo canal de voz.
+5. No PC da conta A: abra o app → **Entrar com Discord** → autorize no navegador → **Entrar na call atual**
+   → **Compartilhar tela**.
+6. Na conta B: clique no botão da mensagem (ou rode `/tela`) → a página `/join` abre o app → ele entra
+   na sala e mostra a tela da conta A. Na lista de participantes e no palco aparecem nome e avatar do Discord.
+   Sem o app, use **Assistir no navegador** (`WEB_APP_URL`) ou o código de 6 caracteres.
+7. As duas contas saem do canal de voz → a mensagem vira "Sala encerrada" e o app volta ao início.
+
+Para testar só com um PC: rode um segundo app desktop com outro perfil ou use o viewer web
+(`npm run dev:web`) com o código mostrado na mensagem.
+
+---
+
 ## 📁 Estrutura do Projeto
 
 ```text
@@ -111,7 +196,8 @@ COMPARTILHARTELAV2/
 │   │   ├── src/preload/    # Bridge IPC segura com contextIsolation
 │   │   ├── src/renderer/   # Interface React, conexão LiveKit e controles de transmissão
 │   │   └── release/        # Pasta onde o instalador .exe é gerado
-│   ├── server/             # API Fastify para autenticação e geração de tokens LiveKit
+│   ├── server/             # API Fastify: tokens LiveKit, SQLite, login Discord, /join e API do bot
+│   ├── bot/                # Bot do Discord (discord.js): sala por canal de voz e comando /tela
 │   └── web/                # Interface web leve para espectadores assistirem via browser
 ├── infra/                  # Configurações de Docker Compose (LiveKit self-hosted opcional)
 └── package.json            # Monorepo NPM Workspaces
@@ -128,6 +214,7 @@ COMPARTILHARTELAV2/
 - [x] Códigos de sala simples e rápidos de 6 dígitos.
 - [x] Espectador web sem necessidade de download.
 - [x] Suporte a aceleração de hardware GPU para codificação de vídeo.
+- [x] Integração com o Discord: sala por canal de voz, botão no chat, `/tela`, login e avatares.
 
 ---
 

@@ -337,3 +337,43 @@
     gap: 32px;
   }
 }
+
+/* Login com Discord no início */
+.d-discord {
+  display: grid;
+  gap: 10px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.d-discord-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-3);
+  background: var(--bg-1);
+}
+
+.d-discord-user .avatar {
+  width: 36px;
+  height: 36px;
+  font-size: 15px;
+}
+
+.d-discord-name {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.d-discord-name strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.d-discord-name span {
+  font-size: 12px;
+  color: var(--text-3);
+}

@@ -7,7 +7,7 @@ const contentSecurityPolicy = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
+  "img-src 'self' data: blob: https://cdn.discordapp.com",
   "media-src 'self' blob: mediastream:",
   "connect-src 'self' https: wss: http://localhost:* ws://localhost:*",
   "worker-src 'self' blob:",

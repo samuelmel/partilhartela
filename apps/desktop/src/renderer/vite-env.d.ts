@@ -17,6 +17,16 @@ declare global {
       startSystemAudioExcluding: (processId: string) => Promise<void>;
       stopApplicationAudio: () => Promise<void>;
       onAudioData: (listener: (chunk: Uint8Array) => void) => () => void;
+      /** Código de sala recebido por partilhartela://join/CODIGO enquanto o app abria. */
+      consumePendingJoin: () => Promise<string | null>;
+      /** Avisa que chegou um link de sala; leia o código com consumePendingJoin. */
+      onJoinRequest: (listener: () => void) => () => void;
+      /** Abre o login do Discord no navegador (PKCE) e devolve o code para trocar no servidor. */
+      authorizeDiscord: (clientId: string) => Promise<{ code: string; codeVerifier: string; redirectUri: string }>;
+      /** Sessão do Discord cifrada com safeStorage no perfil do usuário. */
+      saveSession: (value: string) => Promise<void>;
+      loadSession: () => Promise<string | null>;
+      clearSession: () => Promise<void>;
     };
   }
 }

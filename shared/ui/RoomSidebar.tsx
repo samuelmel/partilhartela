@@ -1,15 +1,8 @@
 import { useEffect, useRef, useState, type JSX, type ReactNode } from 'react';
 import type { ConnectionState } from 'livekit-client';
 import { describeConnection, type Member } from './roomState';
+import { Avatar } from './Avatar';
 import { CheckIcon, CloseIcon, CopyIcon, LeaveIcon, ScreenIcon } from './icons';
-
-const avatarColors = ['#5d61e8', '#2f8f68', '#b8682a', '#a84a8f', '#2f7fb3', '#7b5cc9'];
-
-function avatarColor(identity: string): string {
-  let hash = 0;
-  for (const char of identity) hash = (hash * 31 + char.charCodeAt(0)) | 0;
-  return avatarColors[Math.abs(hash) % avatarColors.length];
-}
 
 export function RoomCode({ code }: { code: string }): JSX.Element {
   return (
@@ -22,9 +15,7 @@ export function RoomCode({ code }: { code: string }): JSX.Element {
 function MemberRow({ member }: { member: Member }): JSX.Element {
   return (
     <li className="member">
-      <span className="avatar" style={{ background: avatarColor(member.identity) }} aria-hidden="true">
-        {member.name.charAt(0).toUpperCase()}
-      </span>
+      <Avatar identity={member.identity} name={member.name} url={member.avatarUrl} />
       <span className="member-name">
         {member.name}
         {member.isLocal && <span className="member-you"> (você)</span>}

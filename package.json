@@ -5,6 +5,7 @@
   "description": "Compartilhamento de tela ao vivo para desktop com Electron, React e LiveKit",
   "workspaces": [
     "apps/server",
+    "apps/bot",
     "apps/desktop",
     "apps/web"
   ],
@@ -12,17 +13,20 @@
     "dev": "npm run dev:desktop",
     "dev:server": "npm --workspace apps/server run dev",
     "dev:desktop": "concurrently \"npm:dev:server\" \"npm --workspace apps/desktop run dev\"",
-    "build": "npm run build:server && npm run build:desktop",
+    "build": "npm run build:server && npm run build:bot && npm run build:desktop",
     "build:server": "npm --workspace apps/server run build",
     "build:desktop": "npm --workspace apps/desktop run build",
     "dev:web": "npm --workspace apps/web run dev",
     "build:web": "npm --workspace apps/web run build",
     "typecheck:web": "npm --workspace apps/web run typecheck",
     "dist": "npm --workspace apps/desktop run dist",
-    "typecheck": "npm run typecheck:server && npm run typecheck:desktop",
+    "typecheck": "npm run typecheck:server && npm run typecheck:bot && npm run typecheck:desktop",
     "typecheck:server": "npm --workspace apps/server run typecheck",
     "typecheck:desktop": "npm --workspace apps/desktop run typecheck",
-    "test:e2e:web": "node scripts/e2e-web.mjs"
+    "test:e2e:web": "node scripts/e2e-web.mjs",
+    "dev:bot": "npm --workspace apps/bot run dev",
+    "build:bot": "npm --workspace apps/bot run build",
+    "typecheck:bot": "npm --workspace apps/bot run typecheck"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

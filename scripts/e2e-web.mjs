@@ -211,6 +211,9 @@ try {
   await B.click(`document.querySelector('[aria-label="Tela cheia"]')`);
   await B.waitFor(`document.fullscreenElement`, 4000);
   await B.eval(`[...document.querySelectorAll('button')].find(b => b.textContent.includes('Sair da sala')).click()`);
+  // Sair pede confirmação (ConfirmDialog).
+  await B.waitFor(`document.querySelector('.confirm .btn-danger')`, 4000);
+  await B.eval(`document.querySelector('.confirm .btn-danger').click()`);
   check('sair durante fullscreen volta ao início sem fullscreen', await B.waitFor(`!document.fullscreenElement && document.querySelector('.home') && !location.search.includes('room')`, 6000));
   check('participante some da lista após sair', await A.waitFor(`!document.querySelector('.side').innerText.includes('Bruno')`, 10000));
 
@@ -242,6 +245,8 @@ try {
 
   // ---------- Limpeza do apresentador
   await A.click(btn('Sair da sala'));
+  await A.waitFor(`document.querySelector('.confirm .btn-danger')`, 4000);
+  await A.click(`document.querySelector('.confirm .btn-danger')`);
   check('apresentador sai e despublica', await A.waitFor(`document.querySelector('.home')`, 6000));
   check('celular vê sala vazia após apresentador sair', await M.waitFor(`document.body.innerText.includes('Ninguém está transmitindo')`, 10000));
 

@@ -17,6 +17,17 @@ contextBridge.exposeInMainWorld('partilharTela', {
   startApplicationAudio: (processId: string): Promise<void> => ipcRenderer.invoke('audio:start-application', processId),
   startSystemAudioExcluding: (processId: string): Promise<void> => ipcRenderer.invoke('audio:start-system-excluding', processId),
   stopApplicationAudio: (): Promise<void> => ipcRenderer.invoke('audio:stop-application'),
+  consumePendingJoin: (): Promise<string | null> => ipcRenderer.invoke('desktop:consume-join'),
+  onJoinRequest: (listener: () => void): (() => void) => {
+    const callback = () => listener();
+    ipcRenderer.on('deeplink:join', callback);
+    return () => ipcRenderer.removeListener('deeplink:join', callback);
+  },
+  authorizeDiscord: (clientId: string): Promise<{ code: string; codeVerifier: string; redirectUri: string }> =>
+    ipcRenderer.invoke('auth:discord-authorize', clientId),
+  saveSession: (value: string): Promise<void> => ipcRenderer.invoke('auth:save-session', value),
+  loadSession: (): Promise<string | null> => ipcRenderer.invoke('auth:load-session'),
+  clearSession: (): Promise<void> => ipcRenderer.invoke('auth:clear-session'),
   onAudioData: (listener: (chunk: Uint8Array) => void): (() => void) => {
     const callback = (_event: Electron.IpcRendererEvent, chunk: Uint8Array) => listener(chunk);
     ipcRenderer.on('audio:data', callback);

@@ -47,6 +47,14 @@
       "owner": "samuelmel",
       "repo": "partilhartela",
       "releaseType": "release"
-    }
+    },
+    "protocols": [
+      {
+        "name": "PartilharTela",
+        "schemes": [
+          "partilhartela"
+        ]
+      }
+    ]
   }
 }

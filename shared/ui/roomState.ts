@@ -14,8 +14,9 @@ import {
 // Estado da sala lido sempre do SDK: a UI não guarda cópias próprias de tracks,
 // então não sobram tiles fantasmas nem áudio de quem já saiu.
 
-export type StreamItem = { id: string; identity: string; name: string; track: RemoteVideoTrack };
-export type Member = { identity: string; name: string; isLocal: boolean; sharing: boolean };
+/** `avatarUrl` vem da metadata do token quando o participante entrou com o Discord. */
+export type StreamItem = { id: string; identity: string; name: string; avatarUrl?: string; track: RemoteVideoTrack };
+export type Member = { identity: string; name: string; avatarUrl?: string; isLocal: boolean; sharing: boolean };
 export type LocalShare = { video?: LocalVideoTrack; hasAudio: boolean; audioMuted: boolean };
 export type RoomSnapshot = {
   streams: StreamItem[];
@@ -36,6 +37,17 @@ function displayName(participant: { name?: string }): string {
   return participant.name?.trim() || 'Visitante';
 }
 
+/** Metadata do participante = `{"discord":{"id","avatarUrl"}}`, assinada pelo servidor no token. */
+export function avatarUrlOf(participant: { metadata?: string }): string | undefined {
+  if (!participant.metadata) return undefined;
+  try {
+    const url: unknown = (JSON.parse(participant.metadata) as { discord?: { avatarUrl?: unknown } })?.discord?.avatarUrl;
+    return typeof url === 'string' && url.startsWith('https://cdn.discordapp.com/') ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function readRoomSnapshot(room: Room): RoomSnapshot {
   const streams: StreamItem[] = [];
   const audio: Record<string, RemoteAudioTrack> = {};
@@ -44,19 +56,31 @@ export function readRoomSnapshot(room: Room): RoomSnapshot {
   const localAudio = local.getTrackPublication(Track.Source.ScreenShareAudio);
   const localVideo = localScreen?.track instanceof LocalVideoTrack ? localScreen.track : undefined;
   const members: Member[] = [
-    { identity: local.identity, name: displayName(local), isLocal: true, sharing: Boolean(localVideo) }
+    { identity: local.identity, name: displayName(local), avatarUrl: avatarUrlOf(local), isLocal: true, sharing: Boolean(localVideo) }
   ];
 
   for (const participant of room.remoteParticipants.values()) {
     const screen = participant.getTrackPublication(Track.Source.ScreenShare);
     const sound = participant.getTrackPublication(Track.Source.ScreenShareAudio);
     if (screen?.track instanceof RemoteVideoTrack) {
-      streams.push({ id: screen.trackSid, identity: participant.identity, name: displayName(participant), track: screen.track });
+      streams.push({
+        id: screen.trackSid,
+        identity: participant.identity,
+        name: displayName(participant),
+        avatarUrl: avatarUrlOf(participant),
+        track: screen.track
+      });
     }
     if (sound?.track instanceof RemoteAudioTrack) {
       audio[participant.identity] = sound.track;
     }
-    members.push({ identity: participant.identity, name: displayName(participant), isLocal: false, sharing: Boolean(screen) });
+    members.push({
+      identity: participant.identity,
+      name: displayName(participant),
+      avatarUrl: avatarUrlOf(participant),
+      isLocal: false,
+      sharing: Boolean(screen)
+    });
   }
 
   return {
@@ -73,6 +97,7 @@ const snapshotEvents = [
   RoomEvent.ParticipantConnected,
   RoomEvent.ParticipantDisconnected,
   RoomEvent.ParticipantNameChanged,
+  RoomEvent.ParticipantMetadataChanged,
   RoomEvent.TrackPublished,
   RoomEvent.TrackUnpublished,
   RoomEvent.TrackSubscribed,

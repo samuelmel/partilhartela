@@ -4,12 +4,14 @@ import type { StreamItem } from './roomState';
 import type { RpgState } from './rpgMode';
 import { leaveFullscreen, useFullscreen } from './useFullscreen';
 import { canSetElementVolume, readStoredVolume, storeVolume, VolumeControl, type ListenerLevel } from './VolumeControl';
+import { Avatar } from './Avatar';
 import { CollapseIcon, ExpandIcon, VolumeOffIcon } from './icons';
 
 type StageItem = {
   id: string;
   identity: string;
   name: string;
+  avatarUrl?: string;
   local: boolean;
   track: RemoteVideoTrack | LocalVideoTrack;
 };
@@ -178,7 +180,14 @@ export function Stage({
           <div className="overlay">
             <div className="overlay-top">
               <span className="live-tag"><span className="live-dot" aria-hidden="true" />Ao vivo</span>
-              <span className="overlay-title">{featured.local ? 'Sua tela' : featured.name}</span>
+              <span className="overlay-title">
+                {featured.local ? 'Sua tela' : (
+                  <span className="with-avatar">
+                    <Avatar identity={featured.identity} name={featured.name} url={featured.avatarUrl} small />
+                    <span>{featured.name}</span>
+                  </span>
+                )}
+              </span>
               {overlayExtra}
             </div>
             <div className="overlay-bottom" onFocus={wake}>
@@ -221,7 +230,14 @@ export function Stage({
               aria-label={`Assistir ${item.local ? 'sua tela' : `a tela de ${item.name}`} em destaque`}
             >
               <ThumbVideo track={item.track} />
-              <span className="thumb-name">{item.local ? 'Sua tela' : item.name}</span>
+              <span className="thumb-name">
+                {item.local ? 'Sua tela' : (
+                  <span className="with-avatar">
+                    <Avatar identity={item.identity} name={item.name} url={item.avatarUrl} small />
+                    <span>{item.name}</span>
+                  </span>
+                )}
+              </span>
             </button>
           ))}
         </div>
