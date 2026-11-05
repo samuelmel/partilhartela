@@ -1,5 +1,6 @@
-// Encoder H.264 do Windows (Media Foundation MFT). Preferimos um MFT de hardware;
-// se não houver, usamos o encoder de software da própria Microsoft.
+// Encoder H.264 do Windows (Media Foundation MFT). Só MFTs síncronos (o encoder de software da
+// Microsoft): os de hardware são assíncronos (METransformNeedInput/HaveOutput) e ProcessInput/
+// ProcessOutput em sequência não funciona neles. Hardware fica para depois, medindo.
 // A saída é Annex-B (start codes), que é o que o packetizer H.264 do WebRTC espera.
 
 use std::ffi::c_void;
@@ -9,8 +10,7 @@ use std::ptr;
 use windows::core::Interface;
 use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, CoUninitialize, COINIT_MULTITHREADED};
-use windows::Win32::System::Variant::{VARIANT, VT_BOOL};
-use windows::Win32::Foundation::VARIANT_TRUE;
+use windows::Win32::System::Variant::VARIANT;
 
 pub struct EncodedFrame {
     pub data: Vec<u8>,
@@ -28,6 +28,8 @@ pub struct Encoder {
     bitrate: u32,
     frame_index: u64,
     com_initialized: bool,
+    /// SPS+PPS do tipo de saída, colados em keyframes que o MFT mande sem eles.
+    sequence_header: Vec<u8>,
 }
 
 impl Encoder {
@@ -37,9 +39,9 @@ impl Encoder {
             .map_err(|e| format!("Não foi possível iniciar o Media Foundation ({e})."))?;
 
         let mut last_error = String::new();
-        let hw_flags = MFT_ENUM_FLAG(MFT_ENUM_FLAG_HARDWARE.0 | MFT_ENUM_FLAG_SORTANDFILTER.0);
         let sw_flags = MFT_ENUM_FLAG(MFT_ENUM_FLAG_SYNCMFT.0 | MFT_ENUM_FLAG_SORTANDFILTER.0);
-        for flags in [hw_flags, sw_flags] {
+        {
+            let flags = sw_flags;
             match activate_encoder(flags) {
                 Ok(Some(transform)) => match Encoder::with_transform(transform, width, height, fps, bitrate, com_initialized) {
                     Ok(encoder) => {
@@ -99,6 +101,18 @@ impl Encoder {
         let provides_samples = info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32 != 0;
         let codec = transform.cast::<ICodecAPI>().ok();
 
+        // Antes de iniciar o streaming: sem B-frames e sem atraso de reordenação (o WebRTC não aceita).
+        if let Some(api) = &codec {
+            for (key, value) in [
+                (&CODECAPI_AVLowLatencyMode, VARIANT::from(true)),
+                (&CODECAPI_AVEncMPVDefaultBPictureCount, VARIANT::from(0u32)),
+                (&CODECAPI_AVEncCommonRealTime, VARIANT::from(1u32)),
+            ] {
+                if unsafe { api.SetValue(key, &value) }.is_err() {
+                    eprintln!("[PartilharTela] O encoder não aceitou um ajuste de baixa latência.");
+                }
+            }
+        }
         unsafe {
             transform.ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0).ok();
             transform
@@ -109,7 +123,12 @@ impl Encoder {
                 .map_err(|e| format!("O encoder não iniciou o streaming ({e})."))?;
         }
 
-        Ok(Self {
+        let sequence_header = unsafe { transform.GetOutputCurrentType(0) }
+            .ok()
+            .and_then(|current| sequence_header_of(&current))
+            .unwrap_or_default();
+
+        let encoder = Self {
             transform,
             codec,
             provides_samples,
@@ -120,7 +139,25 @@ impl Encoder {
             bitrate,
             frame_index: 0,
             com_initialized,
-        })
+            sequence_header,
+        };
+        encoder.set_u32(&CODECAPI_AVEncMPVGOPSize, fps.saturating_mul(2).max(1));
+        encoder.set_u32(&CODECAPI_AVEncCommonRateControlMode, eAVEncCommonRateControlMode_CBR.0 as u32);
+        encoder.set_u32(&CODECAPI_AVEncCommonMeanBitRate, bitrate);
+        Ok(encoder)
+    }
+
+    fn set_u32(&self, api: &windows::core::GUID, value: u32) -> bool {
+        let Some(codec) = &self.codec else { return false };
+        let variant = VARIANT::from(value);
+        unsafe { codec.SetValue(api, &variant).is_ok() }
+    }
+
+    /// Atende `take_rate_control_request()` do WebRTC.
+    pub fn set_bitrate(&mut self, bitrate: u32) {
+        if bitrate != self.bitrate && self.set_u32(&CODECAPI_AVEncCommonMeanBitRate, bitrate) {
+            self.bitrate = bitrate;
+        }
     }
 
     /// `pts_us` é o instante da captura; o MF trabalha em unidades de 100 ns.
@@ -172,9 +209,15 @@ impl Encoder {
             match result {
                 Ok(()) => {
                     if let Some(sample) = sample {
-                        let data = read_sample(&sample)?;
+                        let mut data = read_sample(&sample)?;
                         if !data.is_empty() {
                             let key = self.frame_index == 0 || force_keyframe || is_keyframe(&data);
+                            // Quem entra no meio só decodifica se todo keyframe trouxer SPS (7) e PPS (8).
+                            if key && !self.sequence_header.is_empty() && !(has_nal(&data, 7) && has_nal(&data, 8)) {
+                                let mut with_header = self.sequence_header.clone();
+                                with_header.extend_from_slice(&data);
+                                data = with_header;
+                            }
                             frames.push(EncodedFrame { data, key });
                         }
                     }
@@ -209,10 +252,8 @@ impl Encoder {
 
     fn force_keyframe(&mut self) {
         let Some(codec) = &self.codec else { return };
-        let mut value = VARIANT::default();
+        let value = VARIANT::from(true);
         unsafe {
-            value.Anonymous.Anonymous.vt = VT_BOOL;
-            value.Anonymous.Anonymous.Anonymous.boolVal = VARIANT_TRUE;
             if codec.SetValue(&CODECAPI_AVEncVideoForceKeyFrame, &value).is_err() {
                 eprintln!("[PartilharTela] O encoder não aceitou o pedido de keyframe.");
             }
@@ -225,10 +266,6 @@ impl Encoder {
         let old = std::mem::replace(self, fresh);
         drop(old);
         Ok(())
-    }
-
-    pub fn size(&self) -> (u32, u32) {
-        (self.width, self.height)
     }
 
     /// `false` quando o MFT escolhido não expõe ICodecAPI (aí o chamador recria o encoder).
@@ -315,7 +352,7 @@ fn make_output_type(width: u32, height: u32, fps: u32, bitrate: u32, with_profil
         media_type.SetUINT64(&MF_MT_FRAME_RATE, pack(fps, 1)).ok()?;
         media_type.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, pack(1, 1)).ok()?;
         if with_profile {
-            media_type.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main.0 as u32).ok()?;
+            media_type.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Base.0 as u32).ok()?;
         }
     }
     Some(media_type)
@@ -377,19 +414,33 @@ fn pack(high: u32, low: u32) -> u64 {
     (u64::from(high) << 32) | u64::from(low)
 }
 
-/// Procura SPS (7) ou um slice IDR (5) nos start codes Annex-B do frame.
+/// `MF_MT_MPEG_SEQUENCE_HEADER` do tipo de saída (SPS+PPS em Annex-B), se o MFT o expõe.
+fn sequence_header_of(media_type: &IMFMediaType) -> Option<Vec<u8>> {
+    unsafe {
+        let size = media_type.GetBlobSize(&MF_MT_MPEG_SEQUENCE_HEADER).ok()?;
+        if size == 0 {
+            return None;
+        }
+        let mut blob = vec![0u8; size as usize];
+        media_type.GetBlob(&MF_MT_MPEG_SEQUENCE_HEADER, &mut blob, None).ok()?;
+        Some(blob)
+    }
+}
+
 fn is_keyframe(data: &[u8]) -> bool {
+    has_nal(data, 5) || has_nal(data, 7)
+}
+
+/// Há uma NAL do tipo `wanted` nos start codes Annex-B do frame?
+fn has_nal(data: &[u8], wanted: u8) -> bool {
     let mut index = 0;
     while index + 4 <= data.len() {
         let three = data[index] == 0 && data[index + 1] == 0 && data[index + 2] == 1;
         let four = index + 5 <= data.len() && data[index] == 0 && data[index + 1] == 0 && data[index + 2] == 0 && data[index + 3] == 1;
         if three || four {
             let header = index + if three { 3 } else { 4 };
-            if header < data.len() {
-                let nal = data[header] & 0x1F;
-                if nal == 5 || nal == 7 {
-                    return true;
-                }
+            if header < data.len() && data[header] & 0x1F == wanted {
+                return true;
             }
         }
         index += 1;

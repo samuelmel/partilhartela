@@ -11,16 +11,17 @@ use std::time::{Duration, Instant};
 use libwebrtc::audio_frame::AudioFrame;
 use libwebrtc::audio_source::native::NativeAudioSource;
 use libwebrtc::audio_source::{AudioSourceOptions, RtcAudioSource};
-use libwebrtc::video_frame::{NV12Buffer, VideoFrame, VideoRotation};
+use libwebrtc::video_frame::{EncodedFrameType, EncodedVideoCodec, EncodedVideoFrame, NV12Buffer, VideoFrame, VideoRotation};
 use libwebrtc::video_source::native::NativeVideoSource;
 use libwebrtc::video_source::{RtcVideoSource, VideoResolution};
-use livekit::options::{TrackPublishOptions, VideoCodec, VideoEncoding};
+use livekit::options::{TrackPublishOptions, VideoCodec, VideoEncoderBackend, VideoEncoding};
 use livekit::prelude::*;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::media::audio::{self, run_loopback};
 use crate::media::capture::{bgra_to_nv12, Capturer};
+use crate::media::encoder::Encoder;
 
 #[derive(Deserialize, Clone, Copy)]
 pub struct Quality {
@@ -57,6 +58,13 @@ pub struct ShareState {
     current: Mutex<Option<ShareSession>>,
     busy: AtomicBool,
     next_id: AtomicU64,
+}
+
+/// O que a thread de captura descobre antes de existir a fonte de vídeo.
+struct CaptureInfo {
+    size: (u32, u32),
+    /// `true` = o encoder H.264 do Windows está ativo e a fonte é pré-codificada.
+    encoded: bool,
 }
 
 /// Libera o `busy` mesmo se o comando falhar no meio.
@@ -144,7 +152,7 @@ async fn connect_and_publish(
     let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
     // A captura nasce numa thread própria (os objetos D3D não cruzam threads); ela avisa o tamanho da tela.
-    let (size_tx, size_rx) = mpsc::channel::<Result<(u32, u32), String>>();
+    let (size_tx, size_rx) = mpsc::channel::<Result<CaptureInfo, String>>();
     let (source_tx, source_rx) = mpsc::channel::<NativeVideoSource>();
     let mut threads = Vec::new();
     {
@@ -158,17 +166,21 @@ async fn connect_and_publish(
         .map_err(|_| "A captura da tela não iniciou.".to_owned())?
         .map_err(|_| "A captura da tela não iniciou.".to_owned())
         .and_then(|result| result);
-    let size = match size {
-        Ok(size) => size,
+    let info = match size {
+        Ok(info) => info,
         Err(message) => {
             stop.store(true, Ordering::SeqCst);
             join_threads(threads).await;
             return Err(message);
         }
     };
-    let (width, height) = target_size(size, &quality);
-
-    let source = NativeVideoSource::new(VideoResolution { width, height }, true);
+    let (width, height) = info.size;
+    let resolution = VideoResolution { width, height };
+    let source = if info.encoded {
+        NativeVideoSource::new_encoded(resolution)
+    } else {
+        NativeVideoSource::new(resolution, true)
+    };
 
     let mut room_options = RoomOptions::default();
     room_options.auto_subscribe = false;
@@ -188,7 +200,7 @@ async fn connect_and_publish(
     };
     let room = Arc::new(room);
 
-    let published = publish_tracks(&room, &source, &quality, audio_mode).await;
+    let published = publish_tracks(&room, &source, info.encoded, &quality, audio_mode).await;
     let (video, audio_pub, audio_source) = match published {
         Ok(tracks) => tracks,
         Err(message) => {
@@ -273,6 +285,7 @@ async fn connect_and_publish(
 async fn publish_tracks(
     room: &Arc<Room>,
     source: &NativeVideoSource,
+    encoded: bool,
     quality: &Quality,
     audio_mode: &str,
 ) -> Result<(LocalTrackPublication, Option<LocalTrackPublication>, Option<NativeAudioSource>), String> {
@@ -285,6 +298,8 @@ async fn publish_tracks(
                 source: TrackSource::Screenshare,
                 video_codec: VideoCodec::H264,
                 simulcast: false,
+                // Frames já codificados pelo Windows: o libwebrtc só empacota (pass-through).
+                video_encoder: if encoded { VideoEncoderBackend::PreEncoded } else { VideoEncoderBackend::Auto },
                 video_encoding: Some(VideoEncoding {
                     max_bitrate: quality.bitrate,
                     max_framerate: quality.fps as f64,
@@ -373,7 +388,7 @@ fn capture_loop(
     quality: Quality,
     stop: Arc<AtomicBool>,
     rpg: Arc<AtomicBool>,
-    size_tx: mpsc::Sender<Result<(u32, u32), String>>,
+    size_tx: mpsc::Sender<Result<CaptureInfo, String>>,
     source_rx: mpsc::Receiver<NativeVideoSource>,
     error_tx: tokio::sync::mpsc::UnboundedSender<String>,
 ) {
@@ -384,20 +399,37 @@ fn capture_loop(
             return;
         }
     };
-    let _ = size_tx.send(Ok(capturer.size()));
+    let (dst_w, dst_h) = target_size(capturer.size(), &quality);
+    let interval = Duration::from_micros(1_000_000 / quality.fps as u64);
+    // H.264 do Windows primeiro; se nenhum encoder funcionar, o libwebrtc codifica os frames crus.
+    let mut encoder = match Encoder::new(dst_w, dst_h, quality.fps, quality.bitrate.min(u32::MAX as u64) as u32) {
+        Ok(encoder) => Some(encoder),
+        Err(message) => {
+            eprintln!("[PartilharTela] Sem encoder H.264 do Windows ({message}); usando o do libwebrtc.");
+            None
+        }
+    };
+    let _ = size_tx.send(Ok(CaptureInfo { size: (dst_w, dst_h), encoded: encoder.is_some() }));
     let Ok(source) = source_rx.recv() else { return };
 
-    let resolution = source.video_resolution();
-    let (dst_w, dst_h) = (resolution.width, resolution.height);
-    let interval = Duration::from_micros(1_000_000 / quality.fps as u64);
     let idle_resend = Duration::from_millis(500);
     let started = Instant::now();
     let mut last_sent = Instant::now() - interval;
     let mut last_frame: Option<(Vec<u8>, u32, u32)> = None;
     let mut nv12 = vec![0u8; (dst_w * dst_h * 3 / 2) as usize];
+    let mut was_rpg = false;
+    let mut want_key = false;
 
     while !stop.load(Ordering::Relaxed) {
-        let wait = interval.saturating_sub(last_sent.elapsed()).as_millis().max(1) as u32;
+        if encoder.is_some() {
+            if source.take_keyframe_request() {
+                want_key = true;
+            }
+            if let (Some(request), Some(encoder)) = (source.take_rate_control_request(), encoder.as_mut()) {
+                encoder.set_bitrate(request.target_bitrate_bps.min(u32::MAX as u64) as u32);
+            }
+        }
+        let wait = if want_key { 1 } else { interval.saturating_sub(last_sent.elapsed()).as_millis().max(1) as u32 };
         let fresh = match capturer.acquire(wait) {
             Ok(frame) => frame,
             Err(message) => {
@@ -408,33 +440,69 @@ fn capture_loop(
         if let Some(bgra) = fresh {
             let (w, h) = capturer.size();
             last_frame = Some((bgra, w, h));
-        } else if last_sent.elapsed() < idle_resend {
+        } else if !want_key && last_sent.elapsed() < idle_resend {
             continue;
         }
         if rpg.load(Ordering::Relaxed) {
             // Modo RPG: o vídeo não é enviado (o áudio continua).
+            was_rpg = true;
             last_sent = Instant::now();
             continue;
         }
-        if last_sent.elapsed() < interval {
+        if was_rpg {
+            was_rpg = false;
+            want_key = true;
+        }
+        if !want_key && last_sent.elapsed() < interval {
             continue;
         }
         let Some((bgra, w, h)) = last_frame.as_ref() else { continue };
 
         bgra_to_nv12(bgra, *w, *h, &mut nv12, dst_w, dst_h);
-        let mut buffer = NV12Buffer::new(dst_w, dst_h);
-        {
-            let (y, uv) = buffer.data_mut();
-            let luma = (dst_w * dst_h) as usize;
-            y[..luma].copy_from_slice(&nv12[..luma]);
-            uv[..nv12.len() - luma].copy_from_slice(&nv12[luma..]);
+        let timestamp_us = started.elapsed().as_micros() as i64 + 1;
+
+        if let Some(encoder) = encoder.as_mut() {
+            let force = std::mem::take(&mut want_key);
+            if force && !encoder.can_force_keyframe() {
+                if let Err(message) = encoder.restart() {
+                    let _ = error_tx.send(message);
+                    return;
+                }
+            }
+            match encoder.encode(&nv12, timestamp_us, force) {
+                Ok(frames) => {
+                    for frame in frames {
+                        source.capture_encoded_frame(&EncodedVideoFrame {
+                            codec: EncodedVideoCodec::H264,
+                            payload: &frame.data,
+                            timestamp_us,
+                            frame_type: if frame.key { EncodedFrameType::Key } else { EncodedFrameType::Delta },
+                            resolution: VideoResolution { width: dst_w, height: dst_h },
+                            frame_metadata: None,
+                        });
+                    }
+                }
+                Err(message) => {
+                    let _ = error_tx.send(message);
+                    return;
+                }
+            }
+        } else {
+            want_key = false;
+            let mut buffer = NV12Buffer::new(dst_w, dst_h);
+            {
+                let (y, uv) = buffer.data_mut();
+                let luma = (dst_w * dst_h) as usize;
+                y[..luma].copy_from_slice(&nv12[..luma]);
+                uv[..nv12.len() - luma].copy_from_slice(&nv12[luma..]);
+            }
+            source.capture_frame(&VideoFrame {
+                rotation: VideoRotation::VideoRotation0,
+                timestamp_us,
+                frame_metadata: None,
+                buffer,
+            });
         }
-        source.capture_frame(&VideoFrame {
-            rotation: VideoRotation::VideoRotation0,
-            timestamp_us: started.elapsed().as_micros() as i64,
-            frame_metadata: None,
-            buffer,
-        });
         last_sent = Instant::now();
     }
 }
