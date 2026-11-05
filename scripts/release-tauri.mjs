@@ -1,8 +1,9 @@
 // Publica um release do app Tauri no GitHub com tudo que os dois updaters precisam:
 //   latest.json  -> Tauri (tauri-plugin-updater)
-//   latest.yml   -> Electron (electron-updater); copiado do release Latest atual para nunca faltar
+//   latest.yml   -> Electron antigo (electron-updater); aponta para o mesmo instalador Tauri
 // Uso (na raiz, depois de `tauri build` e de assinar o instalador):  node scripts/release-tauri.mjs [--dry]
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -38,10 +39,22 @@ writeFileSync(path.join(work, 'latest.json'), JSON.stringify({
   }
 }, null, 2));
 
-// O Electron lê o latest.yml do release Latest: se o novo release não tiver um, ele para de achar atualização.
-const response = await fetch(`https://github.com/${repo}/releases/latest/download/latest.yml`);
-if (!response.ok) throw new Error(`Não consegui baixar o latest.yml do release atual (HTTP ${response.status}).`);
-writeFileSync(path.join(work, 'latest.yml'), await response.text());
+// O Electron antigo lê o latest.yml do release Latest: se o novo release não tiver um, ele para de achar
+// atualização. Aqui o latest.yml aponta para o instalador Tauri deste release (o Electron baixa e instala).
+const installerBytes = readFileSync(path.join(nsisDir, installer));
+const sha512 = createHash('sha512').update(installerBytes).digest('base64');
+const installerUrl = `https://github.com/${repo}/releases/download/v${version}/${installer}`;
+writeFileSync(path.join(work, 'latest.yml'), [
+  `version: ${version}`,
+  'files:',
+  `  - url: ${installerUrl}`,
+  `    sha512: ${sha512}`,
+  `    size: ${installerBytes.length}`,
+  `path: ${installerUrl}`,
+  `sha512: ${sha512}`,
+  `releaseDate: '${new Date().toISOString()}'`,
+  ''
+].join('\n'));
 
 const assets = [installer, `${installer}.sig`, 'latest.json', 'latest.yml'].map((name) => path.join(work, name));
 console.log(`Release v${version} com: ${assets.map((a) => path.basename(a)).join(', ')}`);
