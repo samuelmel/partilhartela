@@ -7,7 +7,8 @@
     "apps/server",
     "apps/bot",
     "apps/desktop",
-    "apps/web"
+    "apps/web",
+    "apps/desktop-tauri"
   ],
   "scripts": {
     "dev": "npm run dev:desktop",
@@ -20,9 +21,12 @@
     "build:web": "npm --workspace apps/web run build",
     "typecheck:web": "npm --workspace apps/web run typecheck",
     "dist": "npm --workspace apps/desktop run dist",
-    "typecheck": "npm run typecheck:server && npm run typecheck:bot && npm run typecheck:desktop",
+    "typecheck": "npm run typecheck:server && npm run typecheck:bot && npm run typecheck:desktop && npm run typecheck:tauri",
     "typecheck:server": "npm --workspace apps/server run typecheck",
     "typecheck:desktop": "npm --workspace apps/desktop run typecheck",
+    "typecheck:tauri": "npm --workspace apps/desktop-tauri run typecheck",
+    "dev:tauri": "npm --workspace apps/desktop-tauri run tauri:dev",
+    "build:tauri": "npm --workspace apps/desktop-tauri run tauri:build",
     "test:e2e:web": "node scripts/e2e-web.mjs",
     "dev:bot": "npm --workspace apps/bot run dev",
     "build:bot": "npm --workspace apps/bot run build",

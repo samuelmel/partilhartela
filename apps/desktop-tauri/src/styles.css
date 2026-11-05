@@ -1,0 +1,134 @@
+/* Casca Tauri: a sala usa shared/ui/room.css; aqui fica só a tela de entrada. */
+.home {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.home-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 60px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.home-phase {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+
+.home-body {
+  display: grid;
+  grid-template-columns: minmax(0, 420px) minmax(0, 460px);
+  justify-content: center;
+  align-items: start;
+  gap: 56px;
+  width: 100%;
+  padding: clamp(32px, 8vh, 88px) 24px 48px;
+}
+
+.home-body.is-single {
+  grid-template-columns: minmax(0, 460px);
+}
+
+.home-start {
+  display: grid;
+  gap: 18px;
+}
+
+.home-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--bg-1);
+  color: var(--text-2);
+}
+
+.home-start h1 {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.18;
+  letter-spacing: -.015em;
+}
+
+.home-lead {
+  max-width: 44ch;
+  font-size: 15px;
+  color: var(--text-2);
+}
+
+.join {
+  display: grid;
+  gap: 8px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.join-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.join-row {
+  display: flex;
+  gap: 8px;
+}
+
+.join-row .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.join-row .btn {
+  height: 40px;
+  min-width: 96px;
+}
+
+.invite {
+  display: grid;
+  gap: 12px;
+}
+
+.room-mode {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+
+@media (max-width: 920px) {
+  .home-body {
+    grid-template-columns: minmax(0, 520px);
+    gap: 32px;
+    padding-top: 32px;
+  }
+}
+
+@media (max-width: 760px) {
+  .home-head {
+    height: 52px;
+    padding: 0 16px;
+  }
+
+  .home-body {
+    padding: 24px 16px 32px;
+  }
+
+  .home-start h1 {
+    font-size: 24px;
+  }
+}
