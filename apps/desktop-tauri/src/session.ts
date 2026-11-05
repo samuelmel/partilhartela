@@ -2,6 +2,19 @@ import { Room } from 'livekit-client';
 import { describeConnectError } from '../../../shared/ui/roomState';
 import { attachShareSounds } from '../../../shared/ui/shareSounds';
 
+// Token de sessão do Discord (quando logado): vai como Authorization nas rotas de sala.
+let authToken: string | undefined;
+export function setAuthToken(token: string | undefined): void {
+  authToken = token;
+}
+
+function jsonHeaders(): Record<string, string> {
+  return authToken ? { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` } : { 'Content-Type': 'application/json' };
+}
+
+/** O servidor recusou a sessão do Discord (401): ela precisa ser apagada e o login refeito. */
+export class SessionExpiredError extends Error {}
+
 export const tokenServer = import.meta.env.VITE_TOKEN_SERVER_URL ?? 'http://localhost:8787';
 export const webAppUrl = import.meta.env.VITE_WEB_APP_URL ?? '';
 
@@ -24,7 +37,7 @@ async function postGrant(path: string, nickname: string): Promise<RoomGrant> {
   try {
     response = await fetch(`${tokenServer}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({ nickname })
     });
   } catch {
@@ -32,6 +45,9 @@ async function postGrant(path: string, nickname: string): Promise<RoomGrant> {
   }
 
   const data = await response.json().catch(() => null) as Partial<RoomGrant> & { error?: string } | null;
+  if (response.status === 401) {
+    throw new SessionExpiredError(data?.error ?? 'Sua sessão do Discord expirou. Entre de novo.');
+  }
   if (response.status === 404) {
     throw new Error('Essa sala não existe mais. Confira o código com quem te convidou.');
   }
@@ -91,13 +107,14 @@ export async function requestShareGrant(code: string, nickname: string, identity
   try {
     response = await fetch(`${tokenServer}/rooms/${code}/token`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({ nickname, share: true, shareOf: identity })
     });
   } catch {
     throw new Error('O servidor de salas não respondeu. Tente de novo em alguns segundos.');
   }
   const data = await response.json().catch(() => null) as { token?: string; livekitUrl?: string; error?: string } | null;
+  if (response.status === 401) throw new SessionExpiredError(data?.error ?? 'Sua sessão do Discord expirou. Entre de novo.');
   if (!response.ok || !data?.token || !data.livekitUrl) {
     throw new Error(data?.error ?? 'O servidor de salas recusou a transmissão. Tente de novo.');
   }

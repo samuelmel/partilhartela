@@ -1,17 +1,24 @@
-import { useState, type FormEvent, type JSX } from 'react';
-import { AlertIcon, BrandMark, ScreenIcon } from '../../../shared/ui/icons';
+import { useEffect, useState, type FormEvent, type JSX } from 'react';
+import { AlertIcon, BrandMark, ScreenIcon, UsersIcon } from '../../../shared/ui/icons';
+import { Avatar } from '../../../shared/ui/Avatar';
 import { RoomCode } from '../../../shared/ui/RoomSidebar';
-import { connectRoom, createRoomGrant, readNickname, requestGrant, storeNickname, type Session } from './session';
+import type { DiscordApi } from './discordSession';
+import { connectRoom, createRoomGrant, readNickname, requestGrant, SessionExpiredError, storeNickname, type RoomGrant, type Session } from './session';
 
 const codePattern = /^[A-Z0-9]{6}$/;
 
 export function Home({
   initialCode,
   initialError,
+  discord,
+  autoJoin,
   onEnter
 }: {
   initialCode: string;
   initialError: string;
+  discord: DiscordApi;
+  /** Código vindo de um link partilhartela://join/CODIGO: entra sozinho quando há como se identificar. */
+  autoJoin?: string;
   onEnter: (session: Session) => void;
 }): JSX.Element {
   const [nickname, setNickname] = useState(readNickname);
@@ -21,9 +28,35 @@ export function Home({
   const [nicknameMissing, setNicknameMissing] = useState(false);
   const invited = codePattern.test(initialCode.toUpperCase());
 
-  async function enter(kind: 'join' | 'create' = 'join'): Promise<void> {
-    const name = nickname.trim();
-    const normalized = code.trim().toUpperCase();
+  const discordUser = discord.session?.user;
+
+  async function connect(grant: RoomGrant): Promise<void> {
+    const room = await connectRoom(grant);
+    onEnter({ room, code: grant.code, hostKey: grant.hostKey });
+  }
+
+  async function runDiscord(kind: 'login' | 'voice'): Promise<void> {
+    setError('');
+    setBusy(true);
+    try {
+      if (kind === 'login') {
+        await discord.login();
+        setBusy(false);
+        return;
+      }
+      const voice = await discord.findVoiceRoom();
+      await connect(await requestGrant(voice.code, discordUser?.name ?? ''));
+    } catch (reason) {
+      if (reason instanceof SessionExpiredError) await discord.expire();
+      setError(reason instanceof Error ? reason.message : 'Não foi possível falar com o Discord.');
+      setBusy(false);
+    }
+  }
+
+  async function enter(kind: 'join' | 'create' = 'join', forcedCode?: string): Promise<void> {
+    // Com login, o nome vem do Discord (o servidor ignora o apelido).
+    const name = discordUser?.name ?? nickname.trim();
+    const normalized = (forcedCode ?? code).trim().toUpperCase();
     setError('');
     if (!name) {
       setNicknameMissing(true);
@@ -39,15 +72,21 @@ export function Home({
 
     setBusy(true);
     try {
-      storeNickname(name);
-      const grant = kind === 'create' ? await createRoomGrant(name) : await requestGrant(normalized, name);
-      const room = await connectRoom(grant);
-      onEnter({ room, code: grant.code, hostKey: grant.hostKey });
+      if (!discordUser) storeNickname(name);
+      await connect(kind === 'create' ? await createRoomGrant(name) : await requestGrant(normalized, name));
     } catch (reason) {
+      if (reason instanceof SessionExpiredError) await discord.expire();
       setError(reason instanceof Error ? reason.message : 'Não foi possível entrar na sala.');
       setBusy(false);
     }
   }
+
+  // Link partilhartela://join/CODIGO: espera a sessão carregar para entrar já com ela.
+  useEffect(() => {
+    if (!autoJoin || discord.loading) return;
+    if (discord.session || nickname.trim()) void enter('join', autoJoin);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoJoin, discord.loading]);
 
   function submit(event: FormEvent): void {
     event.preventDefault();
@@ -76,7 +115,29 @@ export function Home({
             </>
           )}
 
-          <div className="field">
+          <div className="home-discord">
+            {discordUser ? (
+              <>
+                <div className="home-discord-user">
+                  <Avatar identity={discordUser.id} name={discordUser.name} url={discordUser.avatarUrl} />
+                  <span>
+                    <strong>{discordUser.name}</strong>
+                    <small>Conectado com o Discord</small>
+                  </span>
+                  <button type="button" className="btn btn-quiet" onClick={() => void discord.logout()} disabled={busy}>Sair</button>
+                </div>
+                <button type="button" className="btn btn-primary btn-lg btn-block" onClick={() => void runDiscord('voice')} disabled={busy} aria-busy={busy}>
+                  <UsersIcon size={18} />Entrar na call atual
+                </button>
+              </>
+            ) : (
+              <button type="button" className="btn btn-lg btn-block" onClick={() => void runDiscord('login')} disabled={busy || discord.loading} aria-busy={busy}>
+                {busy ? 'Aguardando o Discord no navegador…' : 'Entrar com Discord'}
+              </button>
+            )}
+          </div>
+
+          {!discordUser && <div className="field">
             <label className="field-label" htmlFor="nickname">Seu apelido</label>
             <input
               id="nickname"
@@ -92,7 +153,7 @@ export function Home({
               }}
               disabled={busy}
             />
-          </div>
+          </div>}
 
           {!invited && (
             <button className="btn btn-primary btn-lg btn-block" type="button" onClick={() => void enter('create')} disabled={busy}>

@@ -17,10 +17,18 @@ tauri = { version = "2", features = [] }
 livekit = { version = "0.10.1", features = ["rustls-tls-native-roots"] }
 libwebrtc = "0.4.0"
 wasapi = "0.26.0"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 png = "0.17"
+url = "2"
+sha2 = "0.10"
+rand = "0.8"
+tauri-plugin-opener = "2"
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 windows = { version = "0.62.2", features = [
@@ -37,6 +45,8 @@ windows = { version = "0.62.2", features = [
   "Win32_Graphics_Dxgi",
   "Win32_Graphics_Dxgi_Common",
   "Win32_Media",
+  "Win32_Security",
+  "Win32_Security_Cryptography",
   "Win32_Media_MediaFoundation",
   "Win32_System",
   "Win32_System_Com",
