@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Casca Tauri do PartilharTela (Fase 1: entrar na sala e assistir)",
+  "description": "Casca Tauri do PartilharTela (Fase 2: transmitir a tela pelo Rust)",
   "scripts": {
     "dev:webview": "vite --port 5175 --strictPort",
     "build:webview": "tsc -p tsconfig.json --noEmit && vite build",

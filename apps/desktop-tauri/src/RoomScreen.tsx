@@ -1,6 +1,7 @@
 import { useState, type JSX } from 'react';
 import { ConnectionState } from 'livekit-client';
 import { AlertIcon, BrandMark, LeaveIcon, ScreenIcon, UsersIcon } from '../../../shared/ui/icons';
+import { RpgControl } from '../../../shared/ui/RpgControl';
 import { ConfirmDialog } from '../../../shared/ui/ConfirmDialog';
 import { RoomSidebar } from '../../../shared/ui/RoomSidebar';
 import { useRpgMode } from '../../../shared/ui/rpgMode';
@@ -17,7 +18,7 @@ export function RoomScreen({
   session: Session;
   onLeave: () => void | Promise<void>;
 }): JSX.Element {
-  const { room, code } = session;
+  const { room, code, hostKey } = session;
   const snapshot = useRoomSnapshot(room);
   const rpg = useRpgMode(room, tokenServer, code);
   const names = Object.fromEntries(snapshot.members.map((member) => [member.identity, member.name]));
@@ -59,7 +60,9 @@ export function RoomScreen({
         onLeave={() => setLeaveConfirmOpen(true)}
         open={panelOpen}
         onClose={() => setPanelOpen(false)}
-      />
+      >
+        {hostKey && <RpgControl tokenServer={tokenServer} code={code} hostKey={hostKey} rpg={rpg} />}
+      </RoomSidebar>
 
       {panelOpen && <button type="button" className="side-backdrop" aria-label="Fechar painel da sala" onClick={() => setPanelOpen(false)} />}
 

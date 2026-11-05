@@ -1,7 +1,7 @@
 import { useState, type FormEvent, type JSX } from 'react';
 import { AlertIcon, BrandMark, ScreenIcon } from '../../../shared/ui/icons';
 import { RoomCode } from '../../../shared/ui/RoomSidebar';
-import { connectRoom, readNickname, requestGrant, storeNickname, type Session } from './session';
+import { connectRoom, createRoomGrant, readNickname, requestGrant, storeNickname, type Session } from './session';
 
 const codePattern = /^[A-Z0-9]{6}$/;
 
@@ -21,7 +21,7 @@ export function Home({
   const [nicknameMissing, setNicknameMissing] = useState(false);
   const invited = codePattern.test(initialCode.toUpperCase());
 
-  async function enter(): Promise<void> {
+  async function enter(kind: 'join' | 'create' = 'join'): Promise<void> {
     const name = nickname.trim();
     const normalized = code.trim().toUpperCase();
     setError('');
@@ -31,7 +31,7 @@ export function Home({
       document.getElementById('nickname')?.focus();
       return;
     }
-    if (!codePattern.test(normalized)) {
+    if (kind === 'join' && !codePattern.test(normalized)) {
       setError('O código tem 6 letras ou números, como K7RM2Q.');
       document.getElementById('room-code')?.focus();
       return;
@@ -40,7 +40,7 @@ export function Home({
     setBusy(true);
     try {
       storeNickname(name);
-      const grant = await requestGrant(normalized, name);
+      const grant = kind === 'create' ? await createRoomGrant(name) : await requestGrant(normalized, name);
       const room = await connectRoom(grant);
       onEnter({ room, code: grant.code, hostKey: grant.hostKey });
     } catch (reason) {
@@ -51,14 +51,14 @@ export function Home({
 
   function submit(event: FormEvent): void {
     event.preventDefault();
-    void enter();
+    void enter('join');
   }
 
   return (
     <div className="home">
       <header className="home-head">
         <span className="brand"><BrandMark />PartilharTela</span>
-        <span className="home-phase">Fase 1 · visualização</span>
+        <span className="home-phase">Fase 2 · transmissão</span>
       </header>
 
       <main className="home-body is-single">
@@ -67,12 +67,12 @@ export function Home({
           {invited ? (
             <>
               <h1 id="start-title">Você foi convidado para uma sala</h1>
-              <p className="home-lead">Escolha como aparecer e entre. Nesta fase o app só assiste; para transmitir, use o app principal ou o navegador.</p>
+              <p className="home-lead">Escolha como aparecer e entre. Lá dentro você assiste e, se quiser, também transmite a sua tela.</p>
             </>
           ) : (
             <>
               <h1 id="start-title">Assista à tela de quem te chamou</h1>
-              <p className="home-lead">Entre com o código de 6 caracteres. Nesta fase o app só assiste; para transmitir, use o app principal ou o navegador.</p>
+              <p className="home-lead">Crie uma sala e mande o código, ou entre com o código de 6 caracteres de quem te chamou.</p>
             </>
           )}
 
@@ -93,6 +93,12 @@ export function Home({
               disabled={busy}
             />
           </div>
+
+          {!invited && (
+            <button className="btn btn-primary btn-lg btn-block" type="button" onClick={() => void enter('create')} disabled={busy}>
+              <ScreenIcon size={18} />Criar sala
+            </button>
+          )}
 
           {invited ? (
             <form className="invite" onSubmit={submit}>

@@ -5,15 +5,24 @@ import { attachShareSounds } from '../../../shared/ui/shareSounds';
 export const tokenServer = import.meta.env.VITE_TOKEN_SERVER_URL ?? 'http://localhost:8787';
 export const webAppUrl = import.meta.env.VITE_WEB_APP_URL ?? '';
 
-/** `hostKey` só vem para quem criou a sala; nesta fase a casca só entra em salas existentes. */
+/** `hostKey` só vem para quem criou a sala. */
 export type RoomGrant = { code: string; roomName: string; token: string; livekitUrl: string; hostKey?: string };
 export type Session = { room: Room; code: string; hostKey?: string };
 
 /** `/rooms/:code/token` é a mesma rota usada pelo desktop e pela web. */
 export async function requestGrant(code: string, nickname: string): Promise<RoomGrant> {
+  return postGrant(`/rooms/${code}/token`, nickname);
+}
+
+/** `POST /rooms`: cria a sala e devolve o `hostKey` do criador (liga/desliga o modo RPG). */
+export async function createRoomGrant(nickname: string): Promise<RoomGrant> {
+  return postGrant('/rooms', nickname);
+}
+
+async function postGrant(path: string, nickname: string): Promise<RoomGrant> {
   let response: Response;
   try {
-    response = await fetch(`${tokenServer}/rooms/${code}/token`, {
+    response = await fetch(`${tokenServer}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ nickname })
