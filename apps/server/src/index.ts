@@ -114,13 +114,41 @@ function readSession(request: FastifyRequest): store.UserRow | null | undefined 
 const sessionExpired = { error: 'Sua sessão do Discord expirou. Entre com o Discord de novo.' };
 const loginRequired = { error: 'Entre com o Discord primeiro.' };
 
-async function issueGrant(room: store.RoomRow, nickname: unknown, user: store.UserRow | null, hostKey?: string) {
+// Identidade do token de compartilhamento: o app nativo publica pelo Rust com uma
+// identidade própria (`<base>-share`) e avisa na metadata de quem ela é.
+const shareOfPattern = /^[A-Za-z0-9_-]{1,120}$/;
+
+/** `shareOf` ausente = token normal (espectador); presente = token da transmissão. */
+function parseShareBase(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const base = value.trim();
+  return shareOfPattern.test(base) ? base : undefined;
+}
+
+async function issueGrant(
+  room: store.RoomRow,
+  nickname: unknown,
+  user: store.UserRow | null,
+  hostKey?: string,
+  share?: { base?: unknown }
+) {
   // Com login, a identity é o id do Discord e o avatar vai na metadata do participante.
   const profile: DiscordProfile | undefined = user ? toProfile(user) : undefined;
+  // Com login o app nativo publica com `base` = id do Discord; sem login, usa a identity
+  // que o próprio cliente informou. ATENÇÃO: sem login `shareOf` é só o que o cliente diz;
+  // serve para agrupar a transmissão na interface, nunca para autorizar nada.
+  const shareBase = share ? profile?.id ?? parseShareBase(share.base) ?? `${room.code}-share-${crypto.randomUUID()}` : undefined;
+  const identity = shareBase === undefined
+    ? profile?.id ?? `${room.code}-${hostKey ? 'presenter' : 'viewer'}-${crypto.randomUUID()}`
+    : `${shareBase}-share`;
+  const metadata = {
+    ...(profile ? { discord: { id: profile.id, avatarUrl: profile.avatarUrl } } : {}),
+    ...(shareBase === undefined ? {} : { shareOf: shareBase })
+  };
   const token = new AccessToken(apiKey, apiSecret, {
-    identity: profile?.id ?? `${room.code}-${hostKey ? 'presenter' : 'viewer'}-${crypto.randomUUID()}`,
+    identity,
     name: profile?.name ?? normalizeNickname(nickname),
-    metadata: profile ? JSON.stringify({ discord: { id: profile.id, avatarUrl: profile.avatarUrl } }) : undefined,
+    metadata: Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : undefined,
     ttl: '15m'
   });
   token.addGrant({
@@ -129,11 +157,13 @@ async function issueGrant(room: store.RoomRow, nickname: unknown, user: store.Us
     canPublish: true,
     canPublishSources: shareSources,
     canPublishData: true,
-    canSubscribe: true
+    // O participante de transmissão (Rust) só publica: não recebe nada, poupando banda e eco.
+    canSubscribe: shareBase === undefined
   });
   return {
     code: room.code,
     roomName: room.room_name,
+    identity,
     token: await token.toJwt(),
     livekitUrl,
     // Só quem cria recebe: é o que autoriza ligar/desligar o modo RPG.
@@ -175,7 +205,7 @@ app.post<{ Body: { nickname?: string } }>('/rooms', async (request, reply) => {
   }
 });
 
-app.post<{ Params: { code: string }; Body: { nickname?: string } }>('/rooms/:code/token', async (request, reply) => {
+app.post<{ Params: { code: string }; Body: { nickname?: string; share?: boolean; shareOf?: string } }>('/rooms/:code/token', async (request, reply) => {
   const code = request.params.code.toUpperCase();
   if (!isValidRoomCode(code)) {
     return reply.code(400).send({ error: 'Código de sala inválido. Use 6 caracteres alfanuméricos (ex: ABC123).' });
@@ -187,7 +217,8 @@ app.post<{ Params: { code: string }; Body: { nickname?: string } }>('/rooms/:cod
     return reply.code(404).send({ error: 'Sala inexistente ou expirada. Solicite um novo código ao apresentador.' });
   }
   try {
-    return reply.send(await issueGrant(room, request.body?.nickname, user));
+    const share = request.body?.share === true ? { base: request.body?.shareOf } : undefined;
+    return reply.send(await issueGrant(room, request.body?.nickname, user, undefined, share));
   } catch (error) {
     app.log.error({ err: error }, 'Erro ao gerar token');
     return reply.code(500).send({ error: 'Erro interno do servidor. Tente novamente.' });
