@@ -1,6 +1,6 @@
 [package]
 name = "partilhartela-tauri"
-version = "2.0.1"
+version = "2.0.2"
 description = "Casca Tauri do PartilharTela (Fase 2: compartilhar tela pelo Rust)"
 edition = "2021"
 rust-version = "1.77.2"

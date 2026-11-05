@@ -97,7 +97,6 @@ export function Home({
     <div className="home">
       <header className="home-head">
         <span className="brand"><BrandMark />PartilharTela</span>
-        <span className="home-phase">Fase 2 · transmissão</span>
       </header>
 
       <main className="home-body is-single">
