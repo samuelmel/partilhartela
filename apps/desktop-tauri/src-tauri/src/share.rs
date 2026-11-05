@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::media::audio::{self, run_loopback};
-use crate::media::capture::{bgra_to_nv12, Capturer};
+use crate::media::capture::{bgra_to_nv12, parse_source, Capturer, SourceKind};
 use crate::media::encoder::Encoder;
 
 #[derive(Deserialize, Clone, Copy)]
@@ -116,15 +116,17 @@ pub async fn start_share(
     token: String,
     quality: Quality,
     audio: String,
+    source: Option<String>,
 ) -> Result<(), String> {
     validate(&quality, &audio)?;
+    let source = source.as_deref().map(parse_source).transpose()?;
     if state.busy.swap(true, Ordering::SeqCst) {
         return Err("Você já está transmitindo.".to_owned());
     }
     let _busy = BusyGuard(&state.busy);
     emit_state(&app, "starting", None);
 
-    match connect_and_publish(&app, &state, url, token, quality, &audio).await {
+    match connect_and_publish(&app, &state, url, token, quality, &audio, source).await {
         Ok(session) => {
             *state.current.lock().unwrap() = Some(session);
             emit_state(&app, "live", None);
@@ -144,6 +146,7 @@ async fn connect_and_publish(
     token: String,
     quality: Quality,
     audio_mode: &str,
+    source: Option<(SourceKind, u64)>,
 ) -> Result<ShareSession, String> {
     let id = state.next_id.fetch_add(1, Ordering::SeqCst);
     let stop = Arc::new(AtomicBool::new(false));
@@ -158,7 +161,7 @@ async fn connect_and_publish(
     {
         let (stop, rpg, error_tx) = (stop.clone(), rpg.clone(), error_tx.clone());
         threads.push(std::thread::spawn(move || {
-            capture_loop(quality, stop, rpg, size_tx, source_rx, error_tx);
+            capture_loop(quality, source, stop, rpg, size_tx, source_rx, error_tx);
         }));
     }
     let size = tokio::task::spawn_blocking(move || size_rx.recv())
@@ -386,13 +389,21 @@ pub async fn set_share_audio_muted(state: State<'_, ShareState>, muted: bool) ->
 /// Thread de captura: cria o Capturer, informa o tamanho e envia frames até `stop`.
 fn capture_loop(
     quality: Quality,
+    source_spec: Option<(SourceKind, u64)>,
     stop: Arc<AtomicBool>,
     rpg: Arc<AtomicBool>,
     size_tx: mpsc::Sender<Result<CaptureInfo, String>>,
     source_rx: mpsc::Receiver<NativeVideoSource>,
     error_tx: tokio::sync::mpsc::UnboundedSender<String>,
 ) {
-    let mut capturer = match Capturer::new() {
+    // Sem fonte escolhida, usa a primeira tela.
+    let spec = match source_spec {
+        Some(spec) => Ok(spec),
+        None => crate::media::capture::list(SourceKind::Screen).and_then(|screens| {
+            screens.first().map(|screen| (SourceKind::Screen, screen.id())).ok_or_else(|| "Nenhuma tela encontrada.".to_owned())
+        }),
+    };
+    let mut capturer = match spec.and_then(|(kind, id)| Capturer::new(kind, id)) {
         Ok(capturer) => capturer,
         Err(message) => {
             let _ = size_tx.send(Err(message));

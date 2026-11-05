@@ -132,3 +132,169 @@
     font-size: 24px;
   }
 }
+
+/* Seletor de fonte (mesmo visual do app Electron). */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, .6);
+}
+
+.share-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(880px, 100%);
+  max-height: min(680px, 100%);
+  border-radius: 12px;
+  background: var(--bg-2);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, .5);
+  overflow: hidden;
+}
+
+.share-modal:focus {
+  outline: none;
+}
+
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 18px 12px 20px;
+}
+
+.modal-head h2 {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.modal-head p {
+  margin-top: 2px;
+  color: var(--text-2);
+}
+
+.modal-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.modal-tabs [role="tab"] {
+  height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.modal-tabs [role="tab"]:hover {
+  color: var(--text-1);
+}
+
+.modal-tabs [role="tab"][aria-selected="true"] {
+  border-bottom-color: var(--accent);
+  color: var(--text-1);
+}
+
+.modal-refresh {
+  margin-left: auto;
+  height: 32px;
+  font-size: 13px;
+}
+
+.modal-body {
+  flex: 1;
+  min-height: 200px;
+  padding: 16px 20px 20px;
+  overflow-y: auto;
+}
+
+.modal-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 180px;
+  color: var(--text-2);
+  text-align: center;
+}
+
+.sources {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.source {
+  display: grid;
+  gap: 8px;
+  padding: 6px 6px 8px;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background: var(--bg-1);
+  color: var(--text-1);
+  text-align: left;
+  cursor: pointer;
+}
+
+.source:hover {
+  background: var(--bg-3);
+}
+
+.source[aria-current="true"] {
+  border-color: var(--accent);
+}
+
+.source:disabled {
+  opacity: .5;
+  cursor: progress;
+}
+
+.source > img {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  border-radius: 6px;
+  background: #000;
+}
+
+.source-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.source-name img {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.source-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+  color: var(--text-2);
+  font-size: 13px;
+}
+.source-blank { display: block; aspect-ratio: 16 / 9; background: var(--surface-2, #1c1c22); }

@@ -1,5 +1,6 @@
 mod media;
 mod share;
+mod sources;
 
 use tauri::RunEvent;
 
@@ -10,7 +11,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             share::start_share,
             share::stop_share,
-            share::set_share_audio_muted
+            share::set_share_audio_muted,
+            sources::list_sources
         ])
         .build(tauri::generate_context!())
         .expect("erro ao iniciar o PartilharTela");

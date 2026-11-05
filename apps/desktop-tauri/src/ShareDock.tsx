@@ -5,6 +5,7 @@ import type { Room } from 'livekit-client';
 import { AlertIcon, ScreenIcon, StopIcon, VolumeIcon, VolumeOffIcon } from '../../../shared/ui/icons';
 import { qualities, qualityKeys, isQualityKey, type QualityKey } from '../../../shared/ui/qualities';
 import { requestShareGrant } from './session';
+import { SourcePicker, type CaptureSource } from './SourcePicker';
 
 type ShareState = 'idle' | 'starting' | 'live';
 type ShareEvent = { state: 'starting' | 'live' | 'stopped' | 'error'; message?: string };
@@ -22,6 +23,7 @@ export function ShareDock({ room, code }: { room: Room; code: string }): JSX.Ele
   const [hasAudio, setHasAudio] = useState(false);
   const [notice, setNotice] = useState('');
   const busyRef = useRef(false);
+  const [picker, setPicker] = useState<{ sources: CaptureSource[]; loading: boolean; error: string } | null>(null);
 
   useEffect(() => {
     const unlisten = listen<ShareEvent>('share:state', ({ payload }) => {
@@ -38,7 +40,18 @@ export function ShareDock({ room, code }: { room: Room; code: string }): JSX.Ele
     };
   }, []);
 
-  async function start(): Promise<void> {
+  async function openPicker(): Promise<void> {
+    setNotice('');
+    setPicker({ sources: [], loading: true, error: '' });
+    try {
+      const sources = await invoke<CaptureSource[]>('list_sources');
+      setPicker({ sources, loading: false, error: '' });
+    } catch (error) {
+      setPicker({ sources: [], loading: false, error: errorText(error) });
+    }
+  }
+
+  async function start(source: string): Promise<void> {
     if (busyRef.current) return;
     busyRef.current = true;
     setNotice('');
@@ -49,13 +62,15 @@ export function ShareDock({ room, code }: { room: Room; code: string }): JSX.Ele
         url: grant.url,
         token: grant.token,
         quality: { width: preset.width, height: preset.height, fps: preset.fps, bitrate: preset.bitrate },
-        audio: withAudio ? 'system' : 'none'
+        audio: withAudio ? 'system' : 'none',
+        source
       });
+      setPicker(null);
       setHasAudio(withAudio);
       setMuted(false);
     } catch (error) {
       setState('idle');
-      setNotice(errorText(error));
+      setPicker((current) => (current ? { ...current, error: errorText(error) } : current));
     } finally {
       busyRef.current = false;
     }
@@ -132,12 +147,23 @@ export function ShareDock({ room, code }: { room: Room; code: string }): JSX.Ele
             </select>
           </div>
           <div className="dock-actions">
-            <button type="button" className="btn btn-primary" onClick={() => void start()} disabled={starting} aria-busy={starting}>
+            <button type="button" className="btn btn-primary" onClick={() => void openPicker()} disabled={starting} aria-busy={starting}>
               {starting ? <span className="spinner" aria-hidden="true" /> : <ScreenIcon size={18} />}
               {starting ? 'Iniciando…' : 'Compartilhar tela'}
             </button>
           </div>
         </>
+      )}
+      {picker && (
+        <SourcePicker
+          sources={picker.sources}
+          loading={picker.loading}
+          starting={starting}
+          error={picker.error}
+          onClose={() => !starting && setPicker(null)}
+          onRefresh={() => void openPicker()}
+          onSelect={(id) => void start(id)}
+        />
       )}
     </footer>
   );
