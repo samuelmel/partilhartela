@@ -45,7 +45,7 @@ export function Stage({
 }): JSX.Element {
   const rpgActive = rpg?.active ?? false;
   const items = useMemo<StageItem[]>(() => [
-    ...(rpgActive ? [] : streams.map((stream) => ({ ...stream, local: false }))),
+    ...(rpgActive ? [] : streams.map((stream) => ({ ...stream, local: stream.own === true }))),
     ...(local ? [{ id: localId, identity: localId, name: local.name, local: true, track: local.track }] : [])
   ], [streams, local, rpgActive]);
 

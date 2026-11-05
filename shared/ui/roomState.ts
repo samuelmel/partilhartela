@@ -15,7 +15,15 @@ import {
 // então não sobram tiles fantasmas nem áudio de quem já saiu.
 
 /** `avatarUrl` vem da metadata do token quando o participante entrou com o Discord. */
-export type StreamItem = { id: string; identity: string; name: string; avatarUrl?: string; track: RemoteVideoTrack };
+export type StreamItem = {
+  id: string;
+  identity: string;
+  name: string;
+  avatarUrl?: string;
+  track: RemoteVideoTrack;
+  /** Transmissão da própria pessoa vinda do app nativo (Rust): mostrada como "Sua tela", sem áudio. */
+  own?: boolean;
+};
 export type Member = { identity: string; name: string; avatarUrl?: string; isLocal: boolean; sharing: boolean };
 export type LocalShare = { video?: LocalVideoTrack; hasAudio: boolean; audioMuted: boolean };
 export type RoomSnapshot = {
@@ -48,6 +56,26 @@ export function avatarUrlOf(participant: { metadata?: string }): string | undefi
   }
 }
 
+/**
+ * O app nativo transmite por um segundo participante (`<identity>-share`) com `{"shareOf": identity}`
+ * na metadata. Devolve a identity do dono, ou undefined para participantes comuns.
+ * Sem login o valor é só o que o cliente informou: serve para agrupar na interface, não para autorizar.
+ */
+export function shareOwnerOf(participant: { metadata?: string }): string | undefined {
+  if (!participant.metadata) return undefined;
+  try {
+    const owner: unknown = (JSON.parse(participant.metadata) as { shareOf?: unknown })?.shareOf;
+    return typeof owner === 'string' && owner.length > 0 ? owner : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Identity "lógica" de quem transmite: o dono, quando o participante é uma transmissão nativa. */
+export function logicalIdentity(participant: { identity: string; metadata?: string }): string {
+  return shareOwnerOf(participant) ?? participant.identity;
+}
+
 export function readRoomSnapshot(room: Room): RoomSnapshot {
   const streams: StreamItem[] = [];
   const audio: Record<string, RemoteAudioTrack> = {};
@@ -59,9 +87,41 @@ export function readRoomSnapshot(room: Room): RoomSnapshot {
     { identity: local.identity, name: displayName(local), avatarUrl: avatarUrlOf(local), isLocal: true, sharing: Boolean(localVideo) }
   ];
 
+  const sharingOwners = new Set<string>();
+  let ownNativeShare = false;
+
   for (const participant of room.remoteParticipants.values()) {
     const screen = participant.getTrackPublication(Track.Source.ScreenShare);
     const sound = participant.getTrackPublication(Track.Source.ScreenShareAudio);
+    const owner = shareOwnerOf(participant);
+
+    if (owner !== undefined) {
+      // Transmissão do app nativo: não é uma pessoa da sala; pertence ao dono.
+      const isOwn = owner === local.identity;
+      const ownerName = isOwn ? displayName(local) : displayName(room.remoteParticipants.get(owner) ?? participant);
+      if (isOwn) {
+        // Nunca assina o próprio áudio: tocaria o som da pessoa com atraso.
+        if (sound && (sound.isSubscribed || sound.isDesired)) sound.setSubscribed(false);
+      } else if (sound?.track instanceof RemoteAudioTrack) {
+        audio[owner] = sound.track;
+      }
+      if (screen?.track instanceof RemoteVideoTrack) {
+        streams.push({
+          id: screen.trackSid,
+          identity: owner,
+          name: isOwn ? 'Sua tela' : ownerName,
+          avatarUrl: avatarUrlOf(isOwn ? local : room.remoteParticipants.get(owner) ?? participant),
+          track: screen.track,
+          own: isOwn
+        });
+      }
+      if (screen) {
+        if (isOwn) ownNativeShare = true;
+        else sharingOwners.add(owner);
+      }
+      continue;
+    }
+
     if (screen?.track instanceof RemoteVideoTrack) {
       streams.push({
         id: screen.trackSid,
@@ -82,6 +142,11 @@ export function readRoomSnapshot(room: Room): RoomSnapshot {
       sharing: Boolean(screen)
     });
   }
+
+  for (const member of members) {
+    if (sharingOwners.has(member.identity)) member.sharing = true;
+  }
+  if (ownNativeShare) members[0].sharing = true;
 
   return {
     streams,

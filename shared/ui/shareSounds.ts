@@ -1,4 +1,5 @@
 import { RoomEvent, Track, type Participant, type Room, type TrackPublication } from 'livekit-client';
+import { logicalIdentity } from './roomState';
 
 type ShareSound = 'start' | 'stop';
 
@@ -73,7 +74,7 @@ export function attachShareSounds(room: Room): () => void {
   const republishing = new Map<string, number>();
 
   for (const participant of [room.localParticipant, ...room.remoteParticipants.values()]) {
-    if (participant.getTrackPublication(Track.Source.ScreenShare)) sharing.add(participant.identity);
+    if (participant.getTrackPublication(Track.Source.ScreenShare)) sharing.add(logicalIdentity(participant));
   }
 
   const scheduleStop = (identity: string, delayMs: number) => {
@@ -101,7 +102,7 @@ export function attachShareSounds(room: Room): () => void {
 
   const started = (publication: TrackPublication, participant: Participant) => {
     if (publication.source !== Track.Source.ScreenShare) return;
-    const identity = participant.identity;
+    const identity = logicalIdentity(participant);
     const republish = republishing.get(identity);
     const pending = pendingStops.get(identity);
     if (republish !== undefined || pending !== undefined) {
@@ -126,14 +127,14 @@ export function attachShareSounds(room: Room): () => void {
   const onRemotePublished = (publication: TrackPublication, participant: Participant) => started(publication, participant);
   const onLocalPublished = (publication: TrackPublication, participant: Participant) => started(publication, participant);
   const onRemoteUnpublished = (publication: TrackPublication, participant: Participant) => {
-    if (publication.source === Track.Source.ScreenShare) stopped(participant.identity);
+    if (publication.source === Track.Source.ScreenShare) stopped(logicalIdentity(participant));
   };
   const onLocalUnpublished = (publication: TrackPublication, participant: Participant) => {
-    if (publication.source === Track.Source.ScreenShare) stopped(participant.identity);
+    if (publication.source === Track.Source.ScreenShare) stopped(logicalIdentity(participant));
   };
   // Quem sai transmitindo: o SDK costuma despublicar antes; `stopped` ignora a segunda chamada.
   const onParticipantDisconnected = (participant: Participant) => {
-    const identity = participant.identity;
+    const identity = logicalIdentity(participant);
     const republish = republishing.get(identity);
     if (republish !== undefined) {
       // Saiu no meio de uma republicação: a transmissão acabou.
@@ -146,7 +147,7 @@ export function attachShareSounds(room: Room): () => void {
     stopped(identity);
   };
   const onData = (_payload: Uint8Array, participant?: Participant, _kind?: unknown, topic?: string) => {
-    if (topic === republishTopic && participant) markRepublishing(participant.identity);
+    if (topic === republishTopic && participant) markRepublishing(logicalIdentity(participant));
   };
 
   room.on(RoomEvent.TrackPublished, onRemotePublished);
