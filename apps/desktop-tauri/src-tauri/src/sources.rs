@@ -3,6 +3,17 @@
 use base64::Engine;
 use serde::Serialize;
 
+use std::collections::BTreeMap;
+
+use windows::core::BOOL;
+use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM};
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    EnumWindows, GetWindowTextLengthW, GetWindowThreadProcessId, IsWindowVisible,
+};
+
 use crate::media::capture::{self, SourceKind};
 
 const THUMB_WIDTH: usize = 320;
@@ -16,6 +27,8 @@ pub struct SourceInfo {
     title: String,
     /// `data:image/png;base64,...`; ausente se a miniatura falhou.
     thumbnail: Option<String>,
+    /// Só em janelas: processo dono, para sugerir o som por aplicativo.
+    pid: Option<u32>,
 }
 
 fn thumbnail(kind: SourceKind, id: u64) -> Option<String> {
@@ -55,6 +68,7 @@ fn collect() -> Result<Vec<SourceInfo>, String> {
                 kind: kind.label(),
                 title,
                 thumbnail: thumbnail(kind, source.id()),
+                pid: (kind == SourceKind::Window).then(|| window_pid(source.id())).flatten(),
             });
         }
     }
@@ -66,4 +80,69 @@ pub async fn list_sources() -> Result<Vec<SourceInfo>, String> {
     tauri::async_runtime::spawn_blocking(collect)
         .await
         .map_err(|_| "Não foi possível listar as telas e janelas.".to_owned())?
+}
+
+fn window_pid(handle: u64) -> Option<u32> {
+    let mut pid = 0u32;
+    unsafe { GetWindowThreadProcessId(HWND(handle as usize as *mut _), Some(&mut pid)) };
+    (pid != 0).then_some(pid)
+}
+
+#[derive(Serialize)]
+pub struct AudioProcess {
+    pid: u32,
+    name: String,
+}
+
+unsafe extern "system" fn collect_window_pids(hwnd: HWND, param: LPARAM) -> BOOL {
+    let pids = &mut *(param.0 as *mut Vec<u32>);
+    if IsWindowVisible(hwnd).as_bool() && GetWindowTextLengthW(hwnd) > 0 {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid != 0 {
+            pids.push(pid);
+        }
+    }
+    BOOL(1)
+}
+
+fn process_names() -> BTreeMap<u32, String> {
+    let mut names = BTreeMap::new();
+    unsafe {
+        let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else { return names };
+        let mut entry = PROCESSENTRY32W { dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
+        let mut more = Process32FirstW(snapshot, &mut entry).is_ok();
+        while more {
+            let len = entry.szExeFile.iter().position(|c| *c == 0).unwrap_or(entry.szExeFile.len());
+            let exe = String::from_utf16_lossy(&entry.szExeFile[..len]);
+            names.insert(entry.th32ProcessID, exe.trim_end_matches(".exe").trim_end_matches(".EXE").to_owned());
+            more = Process32NextW(snapshot, &mut entry).is_ok();
+        }
+        let _ = CloseHandle(snapshot);
+    }
+    names
+}
+
+/// Aplicativos com janela visível (candidatos ao som por aplicativo), sem o próprio PartilharTela.
+#[tauri::command]
+pub async fn list_audio_processes() -> Result<Vec<AudioProcess>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let mut pids: Vec<u32> = Vec::new();
+        unsafe {
+            let _ = EnumWindows(Some(collect_window_pids), LPARAM(&mut pids as *mut Vec<u32> as isize));
+        }
+        pids.sort_unstable();
+        pids.dedup();
+        let names = process_names();
+        let own = std::process::id();
+        let mut list: Vec<AudioProcess> = pids
+            .into_iter()
+            .filter(|pid| *pid != own)
+            .filter_map(|pid| names.get(&pid).map(|name| AudioProcess { pid, name: name.clone() }))
+            .collect();
+        list.sort_by_key(|item| item.name.to_lowercase());
+        list
+    })
+    .await
+    .map_err(|_| "Não foi possível listar os aplicativos.".to_owned())
 }

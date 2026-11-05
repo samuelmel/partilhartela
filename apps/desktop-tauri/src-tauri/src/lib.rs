@@ -12,7 +12,8 @@ pub fn run() {
             share::start_share,
             share::stop_share,
             share::set_share_audio_muted,
-            sources::list_sources
+            sources::list_sources,
+            sources::list_audio_processes
         ])
         .build(tauri::generate_context!())
         .expect("erro ao iniciar o PartilharTela");

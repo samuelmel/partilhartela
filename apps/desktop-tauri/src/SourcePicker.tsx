@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type JSX } from 'react';
 import { CloseIcon, RefreshIcon } from '../../../shared/ui/icons';
 
-export type CaptureSource = { id: string; kind: 'screen' | 'window'; title: string; thumbnail?: string };
+export type CaptureSource = { id: string; kind: 'screen' | 'window'; title: string; thumbnail?: string; pid?: number | null };
 
 /** Escolha de tela ou janela, com miniaturas. `sources` vem do comando `list_sources` do Rust. */
 export function SourcePicker({
@@ -19,7 +19,7 @@ export function SourcePicker({
   error: string;
   onClose: () => void;
   onRefresh: () => void;
-  onSelect: (id: string) => void;
+  onSelect: (source: CaptureSource) => void;
 }): JSX.Element {
   const [tab, setTab] = useState<'screen' | 'window'>('screen');
   const dialogRef = useRef<HTMLElement>(null);
@@ -63,7 +63,7 @@ export function SourcePicker({
           ) : (
             <div className="sources">
               {filtered.map((source) => (
-                <button key={source.id} type="button" className="source" onClick={() => onSelect(source.id)} disabled={starting}>
+                <button key={source.id} type="button" className="source" onClick={() => onSelect(source)} disabled={starting}>
                   {source.thumbnail ? <img src={source.thumbnail} alt="" /> : <span className="source-blank" aria-hidden="true" />}
                   <span className="source-name"><span>{source.title}</span></span>
                 </button>

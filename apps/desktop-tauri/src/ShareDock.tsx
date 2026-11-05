@@ -7,6 +7,8 @@ import { qualities, qualityKeys, isQualityKey, type QualityKey } from '../../../
 import { requestShareGrant } from './session';
 import { SourcePicker, type CaptureSource } from './SourcePicker';
 
+type AudioMode = 'none' | 'system' | 'application' | 'system-excluding';
+type AudioProcess = { pid: number; name: string };
 type ShareState = 'idle' | 'starting' | 'live';
 type ShareEvent = { state: 'starting' | 'live' | 'stopped' | 'error'; message?: string };
 
@@ -17,7 +19,9 @@ function errorText(error: unknown): string {
 /** Controles da transmissão feita pelo Rust (captura + LiveKit nativos). */
 export function ShareDock({ room, code }: { room: Room; code: string }): JSX.Element {
   const [quality, setQuality] = useState<QualityKey>('1080p30');
-  const [withAudio, setWithAudio] = useState(true);
+  const [audioMode, setAudioMode] = useState<AudioMode>('system');
+  const [processes, setProcesses] = useState<AudioProcess[]>([]);
+  const [audioPid, setAudioPid] = useState<number | null>(null);
   const [state, setState] = useState<ShareState>('idle');
   const [muted, setMuted] = useState(false);
   const [hasAudio, setHasAudio] = useState(false);
@@ -40,8 +44,24 @@ export function ShareDock({ room, code }: { room: Room; code: string }): JSX.Ele
     };
   }, []);
 
+  async function loadProcesses(): Promise<void> {
+    try {
+      const list = await invoke<AudioProcess[]>('list_audio_processes');
+      setProcesses(list);
+      setAudioPid((current) => (current !== null && list.some((item) => item.pid === current) ? current : null));
+    } catch (error) {
+      setNotice(errorText(error));
+    }
+  }
+
+  function changeAudioMode(mode: AudioMode): void {
+    setAudioMode(mode);
+    if (mode === 'application' || mode === 'system-excluding') void loadProcesses();
+  }
+
   async function openPicker(): Promise<void> {
     setNotice('');
+    if (audioMode === 'application' || audioMode === 'system-excluding') void loadProcesses();
     setPicker({ sources: [], loading: true, error: '' });
     try {
       const sources = await invoke<CaptureSource[]>('list_sources');
@@ -51,8 +71,14 @@ export function ShareDock({ room, code }: { room: Room; code: string }): JSX.Ele
     }
   }
 
-  async function start(source: string): Promise<void> {
+  async function start(source: CaptureSource): Promise<void> {
     if (busyRef.current) return;
+    // Som de um aplicativo: sem escolha própria, sugere o dono da janela transmitida.
+    const pid = audioPid ?? (audioMode === 'application' ? source.pid ?? null : null);
+    if ((audioMode === 'application' || audioMode === 'system-excluding') && pid === null) {
+      setPicker((current) => (current ? { ...current, error: 'Escolha o aplicativo do som antes de transmitir.' } : current));
+      return;
+    }
     busyRef.current = true;
     setNotice('');
     try {
@@ -62,11 +88,12 @@ export function ShareDock({ room, code }: { room: Room; code: string }): JSX.Ele
         url: grant.url,
         token: grant.token,
         quality: { width: preset.width, height: preset.height, fps: preset.fps, bitrate: preset.bitrate },
-        audio: withAudio ? 'system' : 'none',
-        source
+        audio: audioMode,
+        audioPid: pid,
+        source: source.id
       });
       setPicker(null);
-      setHasAudio(withAudio);
+      setHasAudio(audioMode !== 'none');
       setMuted(false);
     } catch (error) {
       setState('idle');
@@ -129,10 +156,34 @@ export function ShareDock({ room, code }: { room: Room; code: string }): JSX.Ele
       ) : (
         <>
           <div className="dock-state">
-            <label className="check">
-              <input type="checkbox" checked={withAudio} onChange={(event) => setWithAudio(event.target.checked)} disabled={starting} />
-              Incluir o som do sistema
-            </label>
+            <label className="sr-only" htmlFor="tauri-audio">Som</label>
+            <select
+              id="tauri-audio"
+              className="select select-sm"
+              value={audioMode}
+              onChange={(event) => changeAudioMode(event.target.value as AudioMode)}
+              disabled={starting}
+            >
+              <option value="none">Sem som</option>
+              <option value="system">Som do sistema</option>
+              <option value="application">Som de um aplicativo</option>
+              <option value="system-excluding">Sistema, menos um aplicativo</option>
+            </select>
+            {(audioMode === 'application' || audioMode === 'system-excluding') && (
+              <>
+                <label className="sr-only" htmlFor="tauri-audio-app">Aplicativo</label>
+                <select
+                  id="tauri-audio-app"
+                  className="select select-sm"
+                  value={audioPid ?? ''}
+                  onChange={(event) => setAudioPid(event.target.value ? Number(event.target.value) : null)}
+                  disabled={starting}
+                >
+                  <option value="">{audioMode === 'application' ? 'Dono da janela escolhida' : 'Escolha o aplicativo'}</option>
+                  {processes.map((item) => <option key={item.pid} value={item.pid}>{item.name}</option>)}
+                </select>
+              </>
+            )}
           </div>
           <div className="dock-settings">
             <label className="sr-only" htmlFor="tauri-quality">Qualidade</label>
@@ -162,7 +213,7 @@ export function ShareDock({ room, code }: { room: Room; code: string }): JSX.Ele
           error={picker.error}
           onClose={() => !starting && setPicker(null)}
           onRefresh={() => void openPicker()}
-          onSelect={(id) => void start(id)}
+          onSelect={(source) => void start(source)}
         />
       )}
     </footer>

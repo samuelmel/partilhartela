@@ -19,7 +19,7 @@ use livekit::prelude::*;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::media::audio::{self, run_loopback};
+use crate::media::audio::{self, run_loopback, AudioSource};
 use crate::media::capture::{bgra_to_nv12, parse_source, Capturer, SourceKind};
 use crate::media::encoder::Encoder;
 
@@ -92,7 +92,18 @@ fn target_size(source: (u32, u32), quality: &Quality) -> (u32, u32) {
     (width, height)
 }
 
-fn validate(quality: &Quality, audio: &str) -> Result<(), String> {
+fn audio_source(mode: &str, pid: Option<u32>) -> Result<Option<AudioSource>, String> {
+    let need_pid = || pid.filter(|pid| *pid != 0).ok_or_else(|| "Escolha o aplicativo do som.".to_owned());
+    match mode {
+        "none" => Ok(None),
+        "system" => Ok(Some(AudioSource::System)),
+        "application" => Ok(Some(AudioSource::Application(need_pid()?))),
+        "system-excluding" => Ok(Some(AudioSource::SystemExcluding(need_pid()?))),
+        _ => Err("Modo de áudio inválido.".to_owned()),
+    }
+}
+
+fn validate(quality: &Quality) -> Result<(), String> {
     if !(2..=3840).contains(&quality.width) || !(2..=2160).contains(&quality.height) {
         return Err("Resolução de transmissão inválida.".to_owned());
     }
@@ -102,13 +113,11 @@ fn validate(quality: &Quality, audio: &str) -> Result<(), String> {
     if !(100_000..=50_000_000).contains(&quality.bitrate) {
         return Err("Bitrate de transmissão inválido.".to_owned());
     }
-    if audio != "none" && audio != "system" {
-        return Err("Modo de áudio inválido.".to_owned());
-    }
     Ok(())
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn start_share(
     app: AppHandle,
     state: State<'_, ShareState>,
@@ -117,8 +126,10 @@ pub async fn start_share(
     quality: Quality,
     audio: String,
     source: Option<String>,
+    audio_pid: Option<u32>,
 ) -> Result<(), String> {
-    validate(&quality, &audio)?;
+    validate(&quality)?;
+    let audio_source = audio_source(&audio, audio_pid)?;
     let source = source.as_deref().map(parse_source).transpose()?;
     if state.busy.swap(true, Ordering::SeqCst) {
         return Err("Você já está transmitindo.".to_owned());
@@ -126,7 +137,7 @@ pub async fn start_share(
     let _busy = BusyGuard(&state.busy);
     emit_state(&app, "starting", None);
 
-    match connect_and_publish(&app, &state, url, token, quality, &audio, source).await {
+    match connect_and_publish(&app, &state, url, token, quality, audio_source, source).await {
         Ok(session) => {
             *state.current.lock().unwrap() = Some(session);
             emit_state(&app, "live", None);
@@ -145,7 +156,7 @@ async fn connect_and_publish(
     url: String,
     token: String,
     quality: Quality,
-    audio_mode: &str,
+    audio_mode: Option<AudioSource>,
     source: Option<(SourceKind, u64)>,
 ) -> Result<ShareSession, String> {
     let id = state.next_id.fetch_add(1, Ordering::SeqCst);
@@ -203,7 +214,7 @@ async fn connect_and_publish(
     };
     let room = Arc::new(room);
 
-    let published = publish_tracks(&room, &source, info.encoded, &quality, audio_mode).await;
+    let published = publish_tracks(&room, &source, info.encoded, &quality, audio_mode.is_some()).await;
     let (video, audio_pub, audio_source) = match published {
         Ok(tracks) => tracks,
         Err(message) => {
@@ -239,8 +250,13 @@ async fn connect_and_publish(
     // Áudio do sistema: thread WASAPI -> canal -> capture_frame.
     if let Some(source) = audio_source {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<i16>>(32);
-        let (stop, muted) = (stop.clone(), muted.clone());
-        threads.push(std::thread::spawn(move || run_loopback(stop, muted, tx)));
+        let (stop, muted, error_tx) = (stop.clone(), muted.clone(), error_tx.clone());
+        let audio_from = audio_mode.unwrap_or(AudioSource::System);
+        threads.push(std::thread::spawn(move || {
+            if let Err(message) = run_loopback(audio_from, stop, muted, tx) {
+                let _ = error_tx.send(message);
+            }
+        }));
         tasks.push(tauri::async_runtime::spawn(async move {
             while let Some(samples) = rx.recv().await {
                 let frame = AudioFrame {
@@ -290,7 +306,7 @@ async fn publish_tracks(
     source: &NativeVideoSource,
     encoded: bool,
     quality: &Quality,
-    audio_mode: &str,
+    with_audio: bool,
 ) -> Result<(LocalTrackPublication, Option<LocalTrackPublication>, Option<NativeAudioSource>), String> {
     let video_track = LocalVideoTrack::create_video_track("screen", RtcVideoSource::Native(source.clone()));
     let video = room
@@ -313,7 +329,7 @@ async fn publish_tracks(
         .await
         .map_err(|error| format!("Não foi possível publicar a tela ({error})."))?;
 
-    if audio_mode != "system" {
+    if !with_audio {
         return Ok((video, None, None));
     }
     let audio_source = NativeAudioSource::new(

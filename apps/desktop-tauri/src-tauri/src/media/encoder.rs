@@ -30,6 +30,8 @@ pub struct Encoder {
     com_initialized: bool,
     /// SPS+PPS do tipo de saída, colados em keyframes que o MFT mande sem eles.
     sequence_header: Vec<u8>,
+    /// O MFT recusou `ForceKeyFrame`: o chamador passa a recriar o encoder para obter um IDR.
+    force_failed: bool,
 }
 
 impl Encoder {
@@ -140,6 +142,7 @@ impl Encoder {
             frame_index: 0,
             com_initialized,
             sequence_header,
+            force_failed: false,
         };
         encoder.set_u32(&CODECAPI_AVEncMPVGOPSize, fps.saturating_mul(2).max(1));
         encoder.set_u32(&CODECAPI_AVEncCommonRateControlMode, eAVEncCommonRateControlMode_CBR.0 as u32);
@@ -255,7 +258,7 @@ impl Encoder {
         let value = VARIANT::from(true);
         unsafe {
             if codec.SetValue(&CODECAPI_AVEncVideoForceKeyFrame, &value).is_err() {
-                eprintln!("[PartilharTela] O encoder não aceitou o pedido de keyframe.");
+                self.force_failed = true;
             }
         }
     }
@@ -265,12 +268,14 @@ impl Encoder {
         let fresh = Encoder::new(self.width, self.height, self.fps, self.bitrate)?;
         let old = std::mem::replace(self, fresh);
         drop(old);
+        // O encoder novo começa num IDR; o MFT continua sem aceitar o pedido direto.
+        self.force_failed = true;
         Ok(())
     }
 
     /// `false` quando o MFT escolhido não expõe ICodecAPI (aí o chamador recria o encoder).
     pub fn can_force_keyframe(&self) -> bool {
-        self.codec.is_some()
+        self.codec.is_some() && !self.force_failed
     }
 }
 
