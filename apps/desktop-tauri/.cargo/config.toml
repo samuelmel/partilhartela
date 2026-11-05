@@ -1,0 +1,5 @@
+[build]
+rustflags = ["-C", "target-feature=+crt-static"]
+# O libwebrtc pré-compilado tem headers em caminhos muito fundos; com o target dentro do
+# repositório o caminho passa de 260 caracteres e o cl.exe não abre os arquivos (C1083).
+target-dir = "C:/pt-target"

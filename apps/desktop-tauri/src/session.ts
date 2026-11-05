@@ -75,3 +75,22 @@ export function storeNickname(nickname: string): void {
 export function inviteText(code: string): string {
   return webAppUrl ? `${webAppUrl.replace(/\/$/, '')}/?room=${code}` : code;
 }
+
+/** Token do participante de transmissão (`<identity>-share`), entregue ao Rust. Só publica, não assiste. */
+export async function requestShareGrant(code: string, nickname: string, identity: string): Promise<{ url: string; token: string }> {
+  let response: Response;
+  try {
+    response = await fetch(`${tokenServer}/rooms/${code}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nickname, share: true, shareOf: identity })
+    });
+  } catch {
+    throw new Error('O servidor de salas não respondeu. Tente de novo em alguns segundos.');
+  }
+  const data = await response.json().catch(() => null) as { token?: string; livekitUrl?: string; error?: string } | null;
+  if (!response.ok || !data?.token || !data.livekitUrl) {
+    throw new Error(data?.error ?? 'O servidor de salas recusou a transmissão. Tente de novo.');
+  }
+  return { url: data.livekitUrl, token: data.token };
+}

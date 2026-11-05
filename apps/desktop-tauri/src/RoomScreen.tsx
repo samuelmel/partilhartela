@@ -7,6 +7,7 @@ import { useRpgMode } from '../../../shared/ui/rpgMode';
 import { Stage } from '../../../shared/ui/Stage';
 import { useAudioPlayback, useConnectionState, useRoomSnapshot } from '../../../shared/ui/roomState';
 import { copyText } from './clipboard';
+import { ShareDock } from './ShareDock';
 import { inviteText, tokenServer, type Session } from './session';
 
 export function RoomScreen({
@@ -80,8 +81,7 @@ export function RoomScreen({
             Sala {code}
             <span> {snapshot.members.length} {snapshot.members.length === 1 ? 'pessoa' : 'pessoas'}</span>
           </h1>
-          <span className="room-mode">Só visualização</span>
-          <button type="button" className="btn btn-quiet only-wide" onClick={() => setLeaveConfirmOpen(true)}>
+                    <button type="button" className="btn btn-quiet only-wide" onClick={() => setLeaveConfirmOpen(true)}>
             <LeaveIcon size={16} />Sair da sala
           </button>
           <button type="button" className="icon-btn only-narrow" onClick={() => setLeaveConfirmOpen(true)} aria-label="Sair da sala">
@@ -116,6 +116,7 @@ export function RoomScreen({
             </div>
           }
         />
+        <ShareDock room={room} code={code} />
       </main>
 
       <ConfirmDialog

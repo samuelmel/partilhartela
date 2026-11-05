@@ -1,7 +1,7 @@
 [package]
 name = "partilhartela-tauri"
 version = "0.1.0"
-description = "Casca Tauri do PartilharTela (Fase 1)"
+description = "Casca Tauri do PartilharTela (Fase 2: compartilhar tela pelo Rust)"
 edition = "2021"
 rust-version = "1.77.2"
 
@@ -14,6 +14,41 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+livekit = { version = "0.10.1", features = ["rustls-tls-native-roots"] }
+libwebrtc = "0.4.0"
+wasapi = "0.26.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+windows = { version = "0.62.2", features = [
+  "Graphics",
+  "Graphics_Capture",
+  "Graphics_DirectX",
+  "Graphics_DirectX_Direct3D11",
+  "Media",
+  "Win32",
+  "Win32_Foundation",
+  "Win32_Graphics",
+  "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_Media",
+  "Win32_Media_MediaFoundation",
+  "Win32_System",
+  "Win32_System_Com",
+  "Win32_System_Diagnostics",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Ole",
+  "Win32_System_SystemServices",
+  "Win32_System_Threading",
+  "Win32_System_Variant",
+  "Win32_System_WinRT",
+  "Win32_System_WinRT_Direct3D11",
+  "Win32_UI",
+  "Win32_UI_WindowsAndMessaging",
+] }
 
 [profile.release]
 codegen-units = 1
