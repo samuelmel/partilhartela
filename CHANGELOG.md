@@ -2,6 +2,27 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões seguem [SemVer](https://semver.org/lang/pt-BR/).
 
+## [2.0.5] - 2026-11-05
+
+Primeira linha do app Tauri (substitui o Electron, que está na linha 1.x).
+
+### Novidades
+
+- **desktop**: app reescrito em Tauri 2 + Rust: captura de tela e janela, H.264 pelo Windows, áudio por aplicativo (WASAPI), modo RPG, login com Discord, link `partilhartela://` e atualização automática.
+- **desktop**: qualidade e modo (Movimento e jogos / Texto e código) trocáveis durante a transmissão, com explicação dos modos.
+- **desktop**: janelas minimizadas aparecem no seletor (marcadas) e são restauradas ao transmitir.
+- **release**: `scripts/release-tauri.mjs` publica o instalador com `latest.json` (Tauri) e `latest.yml` (Electron antigo).
+
+### Correções
+
+- **desktop**: o app empacotado agora usa o servidor de salas do `.env` em vez de `localhost`.
+- **desktop**: removido o rótulo de desenvolvimento da tela inicial.
+
+### Manutenção
+
+- Removidos o app Electron, scripts e dependências sem uso; build do Rust sem LTO e incremental (rebuild ~1 min).
+- README reescrito para o projeto atual.
+
 ## [1.3.0] - 2026-10-19
 
 ### Novidades

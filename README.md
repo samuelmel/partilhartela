@@ -22,7 +22,8 @@ abrir, ele procura uma versão nova e mostra o botão **Atualizar agora**.
 
 1. Abra o app e clique em **Criar sala** (ou **Entrar com Discord** e depois **Entrar na call atual**).
 2. Copie o código de 6 caracteres (ou o link do convite) e mande para os outros.
-3. Clique em **Compartilhar tela**, escolha uma **tela** ou uma **janela** e o som:
+3. Clique em **Compartilhar tela**, escolha uma **tela** ou uma **janela** (janelas minimizadas aparecem marcadas e são
+   restauradas ao transmitir) e o som:
    - *Sem som*, *Som do sistema*, *Som de um aplicativo* (só o som daquela janela) ou *Sistema, menos um aplicativo*.
 4. Escolha a qualidade (720p30, 1080p30 ou 1080p60) e o modo:
    - **Movimento e jogos**: mantém todos os quadros por segundo. Bom para jogos, vídeos e cutscenes.
@@ -162,7 +163,7 @@ O protocolo `partilhartela://` é registrado pelo instalador.
 
 ## Recursos
 
-- Transmissão de tela inteira ou de uma janela, com codificação H.264 pelo Windows.
+- Transmissão de tela inteira ou de uma janela (inclusive minimizada), com codificação H.264 pelo Windows.
 - Som do sistema, de um aplicativo ou do sistema menos um aplicativo (Windows).
 - Qualidade (720p30, 1080p30, 1080p60) e modo (movimento ou texto) trocáveis durante a transmissão.
 - Salas por código de 6 caracteres, link de convite e viewer web sem instalação.
