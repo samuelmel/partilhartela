@@ -1,29 +1,24 @@
 {
   "name": "partilhartela",
-  "version": "1.3.0",
+  "version": "2.0.4",
   "private": true,
-  "description": "Compartilhamento de tela ao vivo para desktop com Electron, React e LiveKit",
+  "description": "Compartilhamento de tela e áudio ao vivo com Tauri, React e LiveKit",
   "workspaces": [
     "apps/server",
     "apps/bot",
-    "apps/desktop",
     "apps/web",
     "apps/desktop-tauri"
   ],
   "scripts": {
-    "dev": "npm run dev:desktop",
+    "dev": "npm run dev:tauri",
     "dev:server": "npm --workspace apps/server run dev",
-    "dev:desktop": "concurrently \"npm:dev:server\" \"npm --workspace apps/desktop run dev\"",
-    "build": "npm run build:server && npm run build:bot && npm run build:desktop",
+    "build": "npm run build:server && npm run build:bot",
     "build:server": "npm --workspace apps/server run build",
-    "build:desktop": "npm --workspace apps/desktop run build",
     "dev:web": "npm --workspace apps/web run dev",
     "build:web": "npm --workspace apps/web run build",
     "typecheck:web": "npm --workspace apps/web run typecheck",
-    "dist": "npm --workspace apps/desktop run dist",
-    "typecheck": "npm run typecheck:server && npm run typecheck:bot && npm run typecheck:desktop && npm run typecheck:tauri",
+    "typecheck": "npm run typecheck:server && npm run typecheck:bot && npm run typecheck:tauri",
     "typecheck:server": "npm --workspace apps/server run typecheck",
-    "typecheck:desktop": "npm --workspace apps/desktop run typecheck",
     "typecheck:tauri": "npm --workspace apps/desktop-tauri run typecheck",
     "dev:tauri": "npm --workspace apps/desktop-tauri run tauri:dev",
     "build:tauri": "npm --workspace apps/desktop-tauri run tauri:build",
@@ -31,8 +26,5 @@
     "dev:bot": "npm --workspace apps/bot run dev",
     "build:bot": "npm --workspace apps/bot run build",
     "typecheck:bot": "npm --workspace apps/bot run typecheck"
-  },
-  "devDependencies": {
-    "concurrently": "^9.1.2"
   }
 }

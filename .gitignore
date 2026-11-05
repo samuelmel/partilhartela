@@ -4,13 +4,15 @@ release/
 .env
 .env.local
 *.log
-apps/desktop/out/
+apps/desktop/
 apps/desktop-tauri/src-tauri/target/
 apps/desktop-tauri/src-tauri/gen/
 apps/desktop-tauri/app-icon.png
 poc/wgc-mf/target/
 skills/
 ia.md
-!.claude/skills/
+.claude/
+CLAUDE.md
+.agents/
 apps/server/data/
 

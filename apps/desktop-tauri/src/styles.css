@@ -16,15 +16,6 @@
   border-bottom: 1px solid var(--line);
 }
 
-.home-phase {
-  padding: 4px 10px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-3);
-}
-
 .home-body {
   display: grid;
   grid-template-columns: minmax(0, 420px) minmax(0, 460px);
@@ -101,14 +92,6 @@
   gap: 12px;
 }
 
-.room-mode {
-  padding: 4px 10px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-3);
-}
 
 @media (max-width: 920px) {
   .home-body {
