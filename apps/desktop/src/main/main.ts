@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, session, type MessageBoxOptions } from 'electron';
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, session, shell, type MessageBoxOptions } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import loopback, { type LoopbackCapture } from 'loopback-capture';
 import { execFile } from 'node:child_process';
@@ -51,6 +51,26 @@ function createWindow(): void {
   } else {
     void window.loadFile(path.join(__dirname, '../../dist/index.html'));
   }
+}
+
+const newAppDownloadUrl = 'https://github.com/samuelmel/partilhartela/releases/latest';
+
+// Este app (Electron) foi substituído pelo PartilharTela em Tauri: avisa a cada abertura até a pessoa trocar.
+function showMigrationNotice(): void {
+  if (!app.isPackaged) return;
+  const message: MessageBoxOptions = {
+    type: 'warning',
+    title: 'PartilharTela desatualizado',
+    message: 'Tá desatualizado, paizão, bora atualizar',
+    detail: 'Baixe o PartilharTela novo, instale e depois desinstale este app antigo.',
+    buttons: ['Baixar o novo', 'Depois'],
+    defaultId: 0,
+    cancelId: 1
+  };
+  const result = mainWindow ? dialog.showMessageBox(mainWindow, message) : dialog.showMessageBox(message);
+  void result.then(({ response }) => {
+    if (response === 0) void shell.openExternal(newAppDownloadUrl);
+  });
 }
 
 function configureAutoUpdater(): void {
@@ -245,6 +265,7 @@ app.whenReady().then(() => {
   ipcMain.handle('auth:clear-session', () => clearSession());
 
   createWindow();
+  mainWindow?.webContents.once('did-finish-load', showMigrationNotice);
   configureAutoUpdater();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
