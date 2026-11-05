@@ -671,6 +671,14 @@
   max-width: 220px;
 }
 
+.dock-hint {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
 .btn-toggle[aria-pressed="true"] {
   background: #3b1d22;
   color: var(--danger-text);

@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import type { Room } from 'livekit-client';
 import { AlertIcon, ScreenIcon, StopIcon, VolumeIcon, VolumeOffIcon } from '../../../shared/ui/icons';
 import { qualities, qualityKeys, isQualityKey, type QualityKey } from '../../../shared/ui/qualities';
+import { announceScreenRepublish } from '../../../shared/ui/shareSounds';
 import { requestShareGrant } from './session';
 import { SourcePicker, type CaptureSource } from './SourcePicker';
 
@@ -16,9 +17,26 @@ function errorText(error: unknown): string {
   return typeof error === 'string' ? error : error instanceof Error ? error.message : 'Não foi possível transmitir a tela.';
 }
 
+/**
+ * "Texto e código" manda menos quadros por segundo com o mesmo bitrate: cada quadro fica mais nítido
+ * (leitura). "Movimento e jogos" mantém a taxa de quadros do preset.
+ */
+function presetFor(key: QualityKey, motion: boolean): { width: number; height: number; fps: number; bitrate: number } {
+  const preset = qualities[key];
+  return { width: preset.width, height: preset.height, fps: motion ? preset.fps : Math.min(preset.fps, 15), bitrate: preset.bitrate };
+}
+
+const modeHints = {
+  motion: 'Movimento e jogos: mantém todos os quadros por segundo da qualidade escolhida. Bom para jogos, vídeos e cutscenes; texto pequeno pode ficar um pouco borrado quando a imagem muda muito.',
+  detail: 'Texto e código: manda no máximo 15 quadros por segundo, mas cada quadro fica mais nítido. Bom para ler documentos, código e fichas; movimento rápido fica mais travado.'
+} as const;
+
 /** Controles da transmissão feita pelo Rust (captura + LiveKit nativos). */
 export function ShareDock({ room, code }: { room: Room; code: string }): JSX.Element {
   const [quality, setQuality] = useState<QualityKey>('1080p30');
+  const [motion, setMotion] = useState(true);
+  const [applying, setApplying] = useState(false);
+  const lastSourceRef = useRef<CaptureSource>();
   const [audioMode, setAudioMode] = useState<AudioMode>('system');
   const [processes, setProcesses] = useState<AudioProcess[]>([]);
   const [audioPid, setAudioPid] = useState<number | null>(null);
@@ -71,7 +89,7 @@ export function ShareDock({ room, code }: { room: Room; code: string }): JSX.Ele
     }
   }
 
-  async function start(source: CaptureSource): Promise<void> {
+  async function start(source: CaptureSource, overrides?: { quality: QualityKey; motion: boolean }): Promise<void> {
     if (busyRef.current) return;
     // Som de um aplicativo: sem escolha própria, sugere o dono da janela transmitida.
     const pid = audioPid ?? (audioMode === 'application' ? source.pid ?? null : null);
@@ -82,24 +100,45 @@ export function ShareDock({ room, code }: { room: Room; code: string }): JSX.Ele
     busyRef.current = true;
     setNotice('');
     try {
-      const preset = qualities[quality];
+      const preset = presetFor(overrides?.quality ?? quality, overrides?.motion ?? motion);
       const grant = await requestShareGrant(code, room.localParticipant.name || 'Visitante', room.localParticipant.identity);
       await invoke('start_share', {
         url: grant.url,
         token: grant.token,
-        quality: { width: preset.width, height: preset.height, fps: preset.fps, bitrate: preset.bitrate },
+        quality: preset,
         audio: audioMode,
         audioPid: pid,
         source: source.id
       });
+      lastSourceRef.current = source;
       setPicker(null);
       setHasAudio(audioMode !== 'none');
       setMuted(false);
     } catch (error) {
       setState('idle');
-      setPicker((current) => (current ? { ...current, error: errorText(error) } : current));
+      if (picker) setPicker((current) => (current ? { ...current, error: errorText(error) } : current));
+      else setNotice(errorText(error));
     } finally {
       busyRef.current = false;
+    }
+  }
+
+  /** Troca qualidade ou modo com a transmissão no ar: republica a mesma fonte e o mesmo som com os novos valores. */
+  async function changeLive(nextQuality: QualityKey, nextMotion: boolean): Promise<void> {
+    setQuality(nextQuality);
+    setMotion(nextMotion);
+    const source = lastSourceRef.current;
+    if (state !== 'live' || !source || applying || busyRef.current) return;
+    setApplying(true);
+    setNotice('');
+    try {
+      await announceScreenRepublish(room);
+      await invoke('stop_share');
+      await start(source, { quality: nextQuality, motion: nextMotion });
+    } catch (error) {
+      setNotice(errorText(error));
+    } finally {
+      setApplying(false);
     }
   }
 
@@ -132,23 +171,46 @@ export function ShareDock({ room, code }: { room: Room; code: string }): JSX.Ele
         </p>
       )}
 
-      {state === 'live' ? (
+      {state === 'live' || applying ? (
         <>
           <div className="dock-state" role="status">
             <span className="dock-live" aria-hidden="true" />
             <span>
-              <strong>Você está transmitindo</strong>
-              {hasAudio ? (muted ? ', som mutado para todos' : ', com som') : ', sem som'}
+              <strong>{applying ? 'Aplicando a mudança…' : 'Você está transmitindo'}</strong>
+              {!applying && (hasAudio ? (muted ? ', som mutado para todos' : ', com som') : ', sem som')}
             </span>
+          </div>
+          <div className="dock-settings">
+            <label className="sr-only" htmlFor="tauri-live-quality">Qualidade</label>
+            <select
+              id="tauri-live-quality"
+              className="select select-sm"
+              value={quality}
+              onChange={(event) => isQualityKey(event.target.value) && void changeLive(event.target.value, motion)}
+              disabled={applying}
+            >
+              {qualityKeys.map((key) => <option key={key} value={key}>{qualities[key].label}</option>)}
+            </select>
+            <label className="sr-only" htmlFor="tauri-live-mode">Modo</label>
+            <select
+              id="tauri-live-mode"
+              className="select select-sm"
+              value={motion ? 'motion' : 'detail'}
+              onChange={(event) => void changeLive(quality, event.target.value === 'motion')}
+              disabled={applying}
+            >
+              <option value="motion">Movimento e jogos</option>
+              <option value="detail">Texto e código</option>
+            </select>
           </div>
           <div className="dock-actions">
             {hasAudio && (
-              <button type="button" className={`btn ${muted ? 'btn-toggle' : ''}`} aria-pressed={muted} onClick={() => void toggleMuted()}>
+              <button type="button" className={`btn ${muted ? 'btn-toggle' : ''}`} aria-pressed={muted} onClick={() => void toggleMuted()} disabled={applying}>
                 {muted ? <VolumeOffIcon size={18} /> : <VolumeIcon size={18} />}
                 {muted ? 'Ativar som' : 'Mutar som'}
               </button>
             )}
-            <button type="button" className="btn btn-danger" onClick={() => void stop()}>
+            <button type="button" className="btn btn-danger" onClick={() => void stop()} disabled={applying}>
               <StopIcon size={18} />Parar transmissão
             </button>
           </div>
@@ -196,6 +258,17 @@ export function ShareDock({ room, code }: { room: Room; code: string }): JSX.Ele
             >
               {qualityKeys.map((key) => <option key={key} value={key}>{qualities[key].label}</option>)}
             </select>
+            <label className="sr-only" htmlFor="tauri-mode">Modo</label>
+            <select
+              id="tauri-mode"
+              className="select select-sm"
+              value={motion ? 'motion' : 'detail'}
+              onChange={(event) => setMotion(event.target.value === 'motion')}
+              disabled={starting}
+            >
+              <option value="motion">Movimento e jogos</option>
+              <option value="detail">Texto e código</option>
+            </select>
           </div>
           <div className="dock-actions">
             <button type="button" className="btn btn-primary" onClick={() => void openPicker()} disabled={starting} aria-busy={starting}>
@@ -205,6 +278,7 @@ export function ShareDock({ room, code }: { room: Room; code: string }): JSX.Ele
           </div>
         </>
       )}
+      <p className="dock-hint">{modeHints[motion ? 'motion' : 'detail']}</p>
       {picker && (
         <SourcePicker
           sources={picker.sources}
