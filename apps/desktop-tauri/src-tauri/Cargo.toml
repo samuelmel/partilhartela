@@ -62,8 +62,12 @@ windows = { version = "0.62.2", features = [
   "Win32_UI_WindowsAndMessaging",
 ] }
 
+# Perfil de release pensado para build rápido: sem LTO e com compilação incremental, só o crate do
+# app é recompilado a cada mudança (o gargalo era o LTO total reotimizando libwebrtc, livekit e tauri).
+# O gargalo de desempenho do app está no codificador do Windows e no libwebrtc, não no Rust.
 [profile.release]
-codegen-units = 1
-lto = true
+codegen-units = 16
+incremental = true
+lto = false
 opt-level = "s"
 strip = true
