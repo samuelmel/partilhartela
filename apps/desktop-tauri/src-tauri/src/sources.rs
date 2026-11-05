@@ -5,13 +5,18 @@ use serde::Serialize;
 
 use std::collections::BTreeMap;
 
+use std::ffi::c_void;
+use std::time::Duration;
+
 use windows::core::BOOL;
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM};
+use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowTextLengthW, GetWindowThreadProcessId, IsWindowVisible,
+    EnumWindows, GetWindow, GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
+    IsWindowVisible, ShowWindow, GWL_EXSTYLE, GW_OWNER, SW_RESTORE, WS_EX_TOOLWINDOW,
 };
 
 use crate::media::capture::{self, SourceKind};
@@ -29,6 +34,67 @@ pub struct SourceInfo {
     thumbnail: Option<String>,
     /// Só em janelas: processo dono, para sugerir o som por aplicativo.
     pid: Option<u32>,
+    /// Janela minimizada: o capturador só enxerga janelas visíveis, então ela é restaurada ao transmitir.
+    minimized: bool,
+}
+
+struct MinimizedScan {
+    own_pid: u32,
+    found: Vec<(u64, String, u32)>,
+}
+
+/// Janelas de aplicativo minimizadas (o DesktopCapturer do libwebrtc não as lista).
+unsafe extern "system" fn collect_minimized(hwnd: HWND, param: LPARAM) -> BOOL {
+    let scan = &mut *(param.0 as *mut MinimizedScan);
+    if !IsWindowVisible(hwnd).as_bool() || !IsIconic(hwnd).as_bool() {
+        return BOOL(1);
+    }
+    if GetWindow(hwnd, GW_OWNER).is_ok_and(|owner| !owner.0.is_null()) {
+        return BOOL(1);
+    }
+    if (GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32) & WS_EX_TOOLWINDOW.0 != 0 {
+        return BOOL(1);
+    }
+    // Janelas de outras áreas de trabalho virtuais ficam "cloaked": não são candidatas.
+    let mut cloaked = 0u32;
+    if DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &mut cloaked as *mut u32 as *mut c_void, 4).is_ok() && cloaked != 0 {
+        return BOOL(1);
+    }
+    let len = GetWindowTextLengthW(hwnd);
+    if len <= 0 {
+        return BOOL(1);
+    }
+    let mut buffer = vec![0u16; len as usize + 1];
+    let copied = GetWindowTextW(hwnd, &mut buffer).max(0) as usize;
+    let title = String::from_utf16_lossy(&buffer[..copied]);
+    let mut pid = 0u32;
+    GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    if pid != 0 && pid != scan.own_pid && !title.trim().is_empty() {
+        scan.found.push((hwnd.0 as usize as u64, title, pid));
+    }
+    BOOL(1)
+}
+
+fn minimized_windows() -> Vec<(u64, String, u32)> {
+    let mut scan = MinimizedScan { own_pid: std::process::id(), found: Vec::new() };
+    unsafe {
+        let _ = EnumWindows(Some(collect_minimized), LPARAM(&mut scan as *mut MinimizedScan as isize));
+    }
+    scan.found
+}
+
+/// Restaura a janela se estiver minimizada: sem isso o capturador não a encontra.
+pub fn restore_if_minimized(kind: SourceKind, id: u64) {
+    if kind != SourceKind::Window {
+        return;
+    }
+    let hwnd = HWND(id as usize as *mut _);
+    unsafe {
+        if IsIconic(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+            std::thread::sleep(Duration::from_millis(600));
+        }
+    }
 }
 
 fn thumbnail(kind: SourceKind, id: u64) -> Option<String> {
@@ -69,8 +135,16 @@ fn collect() -> Result<Vec<SourceInfo>, String> {
                 title,
                 thumbnail: thumbnail(kind, source.id()),
                 pid: (kind == SourceKind::Window).then(|| window_pid(source.id())).flatten(),
+                minimized: false,
             });
         }
+    }
+    for (handle, title, pid) in minimized_windows().into_iter().take(MAX_WINDOWS) {
+        let id = format!("window:{handle}");
+        if items.iter().any(|item| item.id == id) {
+            continue;
+        }
+        items.push(SourceInfo { id, kind: "window", title, thumbnail: None, pid: Some(pid), minimized: true });
     }
     Ok(items)
 }

@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState, type JSX } from 'react';
 import { CloseIcon, RefreshIcon } from '../../../shared/ui/icons';
 
-export type CaptureSource = { id: string; kind: 'screen' | 'window'; title: string; thumbnail?: string; pid?: number | null };
+export type CaptureSource = {
+  id: string;
+  kind: 'screen' | 'window';
+  title: string;
+  thumbnail?: string;
+  pid?: number | null;
+  /** Janela minimizada: o app a restaura ao começar a transmitir. */
+  minimized?: boolean;
+};
 
 /** Escolha de tela ou janela, com miniaturas. `sources` vem do comando `list_sources` do Rust. */
 export function SourcePicker({
@@ -65,7 +73,10 @@ export function SourcePicker({
               {filtered.map((source) => (
                 <button key={source.id} type="button" className="source" onClick={() => onSelect(source)} disabled={starting}>
                   {source.thumbnail ? <img src={source.thumbnail} alt="" /> : <span className="source-blank" aria-hidden="true" />}
-                  <span className="source-name"><span>{source.title}</span></span>
+                  <span className="source-name">
+                    <span>{source.title}</span>
+                    {source.minimized && <small className="source-tag">minimizada</small>}
+                  </span>
                 </button>
               ))}
             </div>

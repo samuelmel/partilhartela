@@ -137,6 +137,11 @@ pub async fn start_share(
     let _busy = BusyGuard(&state.busy);
     emit_state(&app, "starting", None);
 
+    if let Some((kind, id)) = source {
+        // Janela minimizada: o capturador só a enxerga depois de restaurada.
+        let _ = tauri::async_runtime::spawn_blocking(move || crate::sources::restore_if_minimized(kind, id)).await;
+    }
+
     match connect_and_publish(&app, &state, url, token, quality, audio_source, source).await {
         Ok(session) => {
             *state.current.lock().unwrap() = Some(session);

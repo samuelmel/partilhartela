@@ -271,6 +271,15 @@
   white-space: nowrap;
 }
 
+.source-tag {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+
 .modal-foot {
   display: flex;
   align-items: center;

@@ -1,9 +1,9 @@
 {
   "name": "@partilhartela/desktop-tauri",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "private": true,
   "type": "module",
-  "description": "Casca Tauri do PartilharTela (Fase 2: transmitir a tela pelo Rust)",
+  "description": "App Windows do PartilharTela (Tauri + Rust)",
   "scripts": {
     "dev:webview": "vite --port 5175 --strictPort",
     "build:webview": "tsc -p tsconfig.json --noEmit && vite build",

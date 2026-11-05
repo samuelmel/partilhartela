@@ -1,7 +1,7 @@
 [package]
 name = "partilhartela-tauri"
-version = "2.0.4"
-description = "Casca Tauri do PartilharTela (Fase 2: compartilhar tela pelo Rust)"
+version = "2.0.5"
+description = "App Windows do PartilharTela (Tauri + Rust)"
 edition = "2021"
 rust-version = "1.77.2"
 
@@ -41,6 +41,7 @@ windows = { version = "0.62.2", features = [
   "Win32_Graphics",
   "Win32_Graphics_Direct3D",
   "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Dwm",
   "Win32_Graphics_Dxgi",
   "Win32_Graphics_Dxgi_Common",
   "Win32_Media",
